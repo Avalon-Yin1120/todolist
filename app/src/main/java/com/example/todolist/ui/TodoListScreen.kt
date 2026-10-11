@@ -62,6 +62,8 @@ fun TodoRoute(
     onRequestNotificationPermission: () -> Unit,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // 时间由界面按需收集（每秒一次），ViewModel 不做常驻轮询
+    val now by viewModel.timeFlow.collectAsStateWithLifecycle(initialValue = viewModel.now())
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(uiState.notice) {
@@ -83,7 +85,7 @@ fun TodoRoute(
 
     TodoListScreen(
         uiState = uiState,
-        now = viewModel.now(),
+        now = now,
         zone = viewModel.zone(),
         snackbarHostState = snackbarHostState,
         onAdd = viewModel::openCreateForm,

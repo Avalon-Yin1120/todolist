@@ -51,7 +51,11 @@ class TodoViewModelTest {
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
         permission = FakeExactAlarmPermission(granted = true)
-        settings = com.example.todolist.data.InMemorySettingsStore()
+        settings = com.example.todolist.data.InMemorySettingsStore(
+            // 默认用通知方式：这样「排定到非精确调度器」的断言才有意义。
+            // 闹钟式路径由专门的用例覆盖。
+            useAlarmForReminders = false,
+        )
         clock = FakeClock(now)
         coordinator = SchedulingCoordinator(repository, exact, inexact, clock, permission, TestData.ZONE)
         viewModel = TodoViewModel(

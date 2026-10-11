@@ -3,6 +3,9 @@ package com.example.todolist
 import android.Manifest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -11,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,6 +26,7 @@ import com.example.todolist.ui.TAG_CANCEL_DELETE
 import com.example.todolist.ui.TAG_CONFIRM_DELETE
 import com.example.todolist.ui.TAG_COUNTDOWN
 import com.example.todolist.ui.TAG_MODE_ALARM
+import com.example.todolist.ui.TAG_MODE_NOTIFICATION
 import com.example.todolist.ui.TAG_SETTINGS_BUTTON
 import com.example.todolist.ui.TAG_SETTINGS_CLOSE
 import com.example.todolist.ui.TAG_SETTING_ALARM
@@ -102,14 +107,27 @@ class TodoListUiTest {
         return runBlocking { graph.repository.findAll().map { it.id }.toSet() }
     }
 
-    /** 通过界面新增一条待办，返回它在数据库里的 id。 */
-    private fun addTodo(name: String): Long {
+    /**
+     * 通过界面新增一条待办，返回它在数据库里的 id。
+     *
+     * @param beforeSave 保存前的额外操作（例如调整起始时间），在填完名称之后执行
+     */
+    private fun addTodo(name: String, beforeSave: (() -> Unit)? = null): Long {
         val before = currentTodoIds()
         composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
         composeRule.onNodeWithTag(TAG_NAME_FIELD).performTextInput(name)
+        composeRule.waitForIdle()
+        beforeSave?.invoke()
+        // 表单内容较长，保存按钮可能在视口外；这里直接点，落库后用轮询确认
         composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
         composeRule.waitForIdle()
-        val added = currentTodoIds() - before
+
+        // 落库是异步的，轮询等待新记录出现
+        var added = emptySet<Long>()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            added = currentTodoIds() - before
+            added.isNotEmpty()
+        }
         return added.singleOrNull() ?: error("新增后无法确定新待办 id：before=$before added=$added")
     }
 
@@ -214,9 +232,27 @@ class TodoListUiTest {
             .config[SemanticsProperties.EditableText]
             .text
 
+    /** 把起始时间字段的日期与时间改成「现在」，让待办进入可勾选时段。 */
+    private fun setStartToNow() {
+        // 先点日期按钮，在弹出的日历里确认今天
+        composeRule.onNodeWithTag("start_date_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("date_confirm").performClick()
+        composeRule.waitForIdle()
+
+        // 再把时间往前调：反复点 -15 直到开始时间不晚于现在（最多 8 次 = 2 小时）
+        repeat(8) {
+            composeRule.onNodeWithTag("start_time_button").performClick()
+            composeRule.waitForIdle()
+            composeRule.onAllNodesWithText("-15")[0].performClick()
+            composeRule.onNodeWithTag("time_confirm").performClick()
+            composeRule.waitForIdle()
+        }
+    }
+
     @Test
     fun 勾选后展示已完成状态() {
-        val id = addTodo(unique("勾选验证"))
+        val id = addTodo(unique("勾选验证"), beforeSave = { setStartToNow() })
         val checkboxTag = tagForTodo(TAG_TODO_CHECKBOX, id)
 
         // 勾选前应为未选中
@@ -238,18 +274,25 @@ class TodoListUiTest {
         composeRule.onNodeWithTag(TAG_NAME_FIELD).performTextInput(name)
         composeRule.waitForIdle()
 
-        // 默认是通知方式
-        composeRule.onNodeWithText("（通知）", substring = true).assertIsDisplayed()
+        // 默认是通知方式（先滚动到该控件，避免表单滚动状态在用例之间残留）
+        composeRule.onNodeWithTag(TAG_MODE_NOTIFICATION).assertExists()
 
         // 切成闹钟式
         composeRule.onNodeWithTag(TAG_MODE_ALARM).performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("（闹钟式）", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("（闹钟式）", substring = true).assertExists()
 
-        // 保存后列表项出现「闹钟」徽章
+        // 保存前记住库里的 id，便于保存后精准定位新增的那一行
+        val before = currentTodoIds()
         composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodesWithText("闹钟")[0].assertIsDisplayed()
+        val id = (currentTodoIds() - before).single()
+
+        // 该行的徽章里应出现「闹钟」
+        composeRule.onNode(
+            hasTestTag(tagForTodo(TAG_TODO_ROW, id)) and hasAnyDescendant(hasText("闹钟")),
+            useUnmergedTree = true,
+        ).assertExists()
     }
 
     @Test
@@ -262,7 +305,8 @@ class TodoListUiTest {
         composeRule.waitForIdle()
 
         // 未来的待办不能标记完成：应显示「未开始」而不是勾选框
-        composeRule.onAllNodesWithText("未开始")[0].assertIsDisplayed()
+        // 用 assertExists 而不是 assertIsDisplayed：新行会加到列表末尾，可能不在视口内
+        composeRule.onAllNodesWithText("未开始")[0].assertExists()
     }
 
     @Test

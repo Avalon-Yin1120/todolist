@@ -18,12 +18,13 @@ import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
 import com.example.todolist.reminder.SchedulingCoordinator
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -122,15 +123,11 @@ class TodoViewModel(
         LocalState(canScheduleExact = canScheduleExactAlarms(), settings = readSettings())
     )
 
-    /** 每秒推进一次，用于倒计时与时段颜色自动更新。 */
-    private val ticker = MutableStateFlow(clock.now())
-
     val uiState: StateFlow<TodoUiState> = combine(
         repository.observeAll(),
         editState,
         localState,
-        ticker,
-    ) { todos, edit, local, _ ->
+    ) { todos, edit, local ->
         TodoUiState(
             todos = todos,
             editState = edit,
@@ -147,17 +144,22 @@ class TodoViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, TodoUiState())
 
-    init {
-        viewModelScope.launch {
-            while (isActive) {
-                ticker.value = clock.now()
-                delay(TICK_INTERVAL_MS)
-            }
+    /**
+     * 当前时刻，每秒发一次。
+     *
+     * 刻意做成冷流、由界面收集，而不是在 init 里起一个永不结束的 while 循环：
+     * * 常驻轮询即使界面不可见也在跑，白耗电；
+     * * 无限循环会让测试里的虚拟调度器永远「不空闲」，`runTest` 会一直等下去。
+     */
+    val timeFlow: Flow<Long> = flow {
+        while (true) {
+            emit(clock.now())
+            delay(TICK_INTERVAL_MS)
         }
     }
 
     /** 当前时刻（用于倒计时与时段判定）。 */
-    fun now(): Long = ticker.value
+    fun now(): Long = clock.now()
 
     /** 当前时区。 */
     fun zone(): ZoneId = zone
@@ -235,10 +237,13 @@ class TodoViewModel(
                 coordinator.update(draft)
             }
             if (result != null) {
-                if (result.overlapping.isNotEmpty() && settings.warnOnOverlap) {
-                    notify(Notice.OverlapWarning(result.overlapping.map { it.name }.take(3)))
-                } else {
-                    notify(Notice.Saved)
+                // 提示优先级：降级（闹钟式退化为通知）> 时间段冲突 > 保存成功。
+                // 降级必须让用户知道，否则他以为会像闹钟一样准时响。
+                when {
+                    result.degraded -> notify(Notice.ExactAlarmDegraded)
+                    result.overlapping.isNotEmpty() && settings.warnOnOverlap ->
+                        notify(Notice.OverlapWarning(result.overlapping.map { it.name }.take(3)))
+                    else -> notify(Notice.Saved)
                 }
             }
             dismissForm()
