@@ -7,8 +7,8 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [TodoEntity::class],
-    // v4：重复支持截止日期与总次数
-    version = 4,
+    // v5：重复支持生效起始日期
+    version = 5,
     exportSchema = true,
 )
 abstract class TodoDatabase : RoomDatabase() {
@@ -28,7 +28,7 @@ abstract class TodoDatabase : RoomDatabase() {
                 TodoDatabase::class.java,
                 DB_NAME,
             )
-                // v1 -> v2 新增周期与提醒方式；v2 -> v3 新增周几/几号；v3 -> v4 新增重复截止与次数。
+                // v1 -> v2 新增周期与提醒方式；v2 -> v3 新增周几/几号；v3 -> v4 新增重复截止与次数；v4 -> v5 新增生效起始日期。
                 // 正式发版前必须替换为真正的 Migration；当前尚未发布，直接重建库。
                 .fallbackToDestructiveMigration()
                 .build()

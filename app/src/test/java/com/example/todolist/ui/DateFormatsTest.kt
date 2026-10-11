@@ -199,6 +199,104 @@ class DateFormatsTest {
         ).isNull()
     }
 
+    // -------------------------------------------------- 重复范围（第 12 项）
+
+    @Test
+    fun `不填生效起始日时从待办自身的起始日生效`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.DAILY,
+        )
+        // 起始日当天就生效
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 11))).isTrue()
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 10))).isFalse()
+    }
+
+    @Test
+    fun `填了生效起始日后之前不生效`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.DAILY,
+            recurrenceStartDate = "2026-06-01",
+        )
+        // 待办本身 5/11 开始，但重复要到 6/1 才生效
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 11))).isFalse()
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 31))).isFalse()
+        assertThat(occursOn(todo, LocalDate.of(2026, 6, 1))).isTrue()
+        assertThat(occursOn(todo, LocalDate.of(2026, 6, 2))).isTrue()
+    }
+
+    @Test
+    fun `生效起始日影响次数与截止日期的互算`() {
+        // 每周一，但从 6/1（周一）才生效
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.MONDAY),
+            recurrenceStartDate = "2026-06-01",
+        )
+        // 3 次：6/1、6/8、6/15（5 月的周一不计入）
+        assertThat(endDateForCount(todo, 3)).isEqualTo(LocalDate.of(2026, 6, 15))
+        assertThat(countUntil(todo, LocalDate.of(2026, 6, 15))).isEqualTo(3)
+        // 数到 5/31 时一次都还没生效，至少按 1 计
+        assertThat(countUntil(todo, LocalDate.of(2026, 5, 31))).isEqualTo(1)
+    }
+
+    @Test
+    fun `截止日期限制最后一场`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.MONDAY),
+            recurrenceEndDate = "2026-05-25",
+        )
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 25))).isTrue()
+        assertThat(occursOn(todo, LocalDate.of(2026, 6, 1))).isFalse()
+        assertThat(countUntil(todo, LocalDate.of(2026, 5, 25))).isEqualTo(3)
+    }
+
+    @Test
+    fun `次数与截止日期同时存在时以先到者为准`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.MONDAY),
+            recurrenceEndDate = "2026-06-29", // 允许到 6/29
+            recurrenceCount = 2, // 但只排 2 次：5/11、5/18
+        )
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 18))).isTrue()
+        assertThat(occursOn(todo, LocalDate.of(2026, 5, 25))).isFalse()
+    }
+
+    @Test
+    fun `每次都是同一时刻只换日期`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11, 9, 30),
+            endAt = at(2026, 5, 11, 10, 30),
+            recurrence = Recurrence.DAILY,
+        )
+        val occurrence = com.example.todolist.domain.RecurrenceExpander
+            .occurrenceOn(todo, LocalDate.of(2026, 5, 20), TestData.ZONE)
+        assertThat(occurrence.startAt).isEqualTo(at(2026, 5, 20, 9, 30))
+        assertThat(occurrence.endAt).isEqualTo(at(2026, 5, 20, 10, 30))
+    }
+
+    // -------------------------------------------------- 通用
+
+    private fun occursOn(todo: com.example.todolist.domain.Todo, date: LocalDate): Boolean =
+        com.example.todolist.domain.RecurrenceExpander.occursOn(todo, date, TestData.ZONE)
+
+    private fun endDateForCount(todo: com.example.todolist.domain.Todo, count: Int): LocalDate? =
+        com.example.todolist.domain.RecurrenceExpander.endDateForCount(todo, count, TestData.ZONE)
+
+    private fun countUntil(todo: com.example.todolist.domain.Todo, end: LocalDate): Int =
+        com.example.todolist.domain.RecurrenceExpander.countUntil(todo, end, TestData.ZONE)
+
     private fun at(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long =
         LocalDate.of(year, month, day).atTime(hour, minute)
             .atZone(TestData.ZONE).toInstant().toEpochMilli()

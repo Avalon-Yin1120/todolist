@@ -36,7 +36,9 @@ object RecurrenceExpander {
         if (!todo.recurrence.isRecurring) {
             return startDate == date
         }
-        if (date.isBefore(startDate)) return false
+        // 生效起始日期：留空表示从待办自身的起始日生效
+        val effectiveStart = effectiveStartDate(todo, startDate)
+        if (date.isBefore(effectiveStart)) return false
         // 截止日期是硬边界：超过就彻底不再出现
         todo.recurrenceEndDate?.let { end ->
             runCatching { LocalDate.parse(end, DATE_FORMATTER) }.getOrNull()?.let {
@@ -44,12 +46,23 @@ object RecurrenceExpander {
             }
         }
         if (!matchesRule(todo, date, startDate)) return false
-        // 次数限制：从第一场数到这一场，超过总数就不再出现
+        // 次数限制：从生效首场数到这一场，超过总数就不再出现
         todo.recurrenceCount?.let { limit ->
             if (limit > 0 && occurrenceIndex(todo, date, zone, startDate) >= limit) return false
         }
         return true
     }
+
+    /**
+     * 重复实际从哪一天开始生效。
+     *
+     * 用户可单独指定生效起始日期（例如「从下个月 1 号开始每周一」）；
+     * 留空则回落到待办自身的起始日。
+     */
+    fun effectiveStartDate(todo: Todo, startDate: LocalDate): LocalDate =
+        todo.recurrenceStartDate
+            ?.let { runCatching { LocalDate.parse(it, DATE_FORMATTER) }.getOrNull() }
+            ?: startDate
 
     /** 只判断规则本身（星期/号数/每天），不含例外、截止与次数。 */
     private fun matchesRule(todo: Todo, date: LocalDate, startDate: LocalDate): Boolean =
@@ -70,7 +83,7 @@ object RecurrenceExpander {
      */
     fun occurrenceIndex(todo: Todo, date: LocalDate, zone: ZoneId, startDate: LocalDate): Int {
         var index = 0
-        var cursor = startDate
+        var cursor = effectiveStartDate(todo, startDate)
         while (cursor.isBefore(date)) {
             if (matchesRule(todo, cursor, startDate)) index++
             cursor = cursor.plusDays(1)
@@ -94,7 +107,7 @@ object RecurrenceExpander {
         if (!todo.recurrence.isRecurring || count <= 0) return null
         val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
         var seen = 0
-        var cursor = startDate
+        var cursor = effectiveStartDate(todo, startDate)
         repeat(searchDays) {
             if (matchesRule(todo, cursor, startDate)) {
                 seen++
@@ -110,7 +123,7 @@ object RecurrenceExpander {
         if (!todo.recurrence.isRecurring) return 1
         val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
         var seen = 0
-        var cursor = startDate
+        var cursor = effectiveStartDate(todo, startDate)
         while (!cursor.isAfter(endDate)) {
             if (matchesRule(todo, cursor, startDate)) seen++
             cursor = cursor.plusDays(1)

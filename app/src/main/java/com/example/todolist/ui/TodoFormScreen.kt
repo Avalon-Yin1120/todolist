@@ -27,6 +27,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.remember
 import java.time.LocalDate
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -348,7 +354,7 @@ private fun RecurrenceRangeSection(
     val start = state.startAt
     val startDate = start?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
 
-    /** 用于推算的临时 Todo：只要有规则、起始时间与选中的日子即可。 */
+    /** 用于推算的临时 Todo：带上当前已选的规则与生效起始日。 */
     fun draftTodo(): Todo? {
         val s = start ?: return null
         return Todo(
@@ -358,97 +364,168 @@ private fun RecurrenceRangeSection(
             recurrence = state.recurrence,
             weekDays = state.weekDays,
             monthDays = state.monthDays,
+            recurrenceStartDate = state.recurrenceStartDate,
         )
     }
 
     val countText = state.recurrenceCount?.toString().orEmpty()
-    val endText = state.recurrenceEndDate.orEmpty()
+    val endDate = state.recurrenceEndDate?.let { parseIsoDate(it) }
+    val effectiveStart = state.recurrenceStartDate?.let { parseIsoDate(it) } ?: startDate
 
     Text(
         text = "重复范围",
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = countText,
-            onValueChange = { raw ->
-                val digits = raw.filter { it.isDigit() }.take(4)
-                val count = digits.toIntOrNull()
-                form.setRecurrenceCount(count)
-                // 次数 -> 截止日期：联动算出最后一场的日期
-                val todo = draftTodo()
-                if (count != null && count > 0 && todo != null) {
-                    val end = RecurrenceExpander.endDateForCount(todo, count, zone)
-                    form.setRecurrenceEndDate(end?.format(DateTimeFormatter.ISO_LOCAL_DATE))
-                }
-            },
-            label = { Text("重复次数") },
-            placeholder = { Text("不限") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier
-                .weight(1f)
-                .testTag(TAG_RECURRENCE_COUNT),
-        )
-        OutlinedTextField(
-            value = endText,
-            onValueChange = { raw -> /* 只读，用右侧按钮改 */ },
-            readOnly = true,
-            label = { Text("截止日期") },
-            placeholder = { Text("不限") },
-            singleLine = true,
-            modifier = Modifier
-                .weight(1.2f)
-                .testTag(TAG_RECURRENCE_END),
-        )
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedButton(
-            onClick = {
-                // 截止日期 -> 次数：按当前规则数出到该日期为止总共有几场
-                val todo = draftTodo() ?: return@OutlinedButton
-                val end = state.recurrenceEndDate?.let {
-                    runCatching { LocalDate.parse(it, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
-                } ?: startDate?.plusMonths(1) ?: return@OutlinedButton
-                form.setRecurrenceCount(RecurrenceExpander.countUntil(todo, end, zone))
-            },
-            modifier = Modifier
-                .weight(1f)
-                .testTag(TAG_RECURRENCE_SYNC),
-        ) { Text("按截止日期算次数") }
 
-        OutlinedButton(
-            onClick = { form.setRecurrenceEndDate(null) },
-            modifier = Modifier.weight(1f),
-            enabled = endText.isNotEmpty(),
-        ) { Text("清除截止") }
-    }
+    // 1) 生效起始日期：留空表示从待办自身的起始日生效
+    DateFieldButton(
+        label = "生效起始",
+        value = state.recurrenceStartDate?.let { parseIsoDate(it) },
+        hint = "留空则从 ${startDate?.format(SHORT_DATE) ?: "—"} 生效",
+        tag = TAG_RECURRENCE_START,
+        onPick = { picked ->
+            form.setRecurrenceStartDate(picked.format(DateTimeFormatter.ISO_LOCAL_DATE))
+            // 生效起始日会改变场次数，如果次数已定就重算截止日期
+            val todo = draftTodo()?.copy(
+                recurrenceStartDate = picked.format(DateTimeFormatter.ISO_LOCAL_DATE),
+            )
+            state.recurrenceCount?.let { count ->
+                if (todo != null) {
+                    form.setRecurrenceEndDate(
+                        RecurrenceExpander.endDateForCount(todo, count, zone)
+                            ?.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    )
+                }
+            }
+        },
+        onClear = { if (state.recurrenceStartDate != null) form.setRecurrenceStartDate(null) },
+    )
+
+    // 2) 截止日期：填了就反推次数
+    DateFieldButton(
+        label = "截止日期",
+        value = endDate,
+        hint = "留空表示不限",
+        tag = TAG_RECURRENCE_END,
+        onPick = { picked ->
+            val iso = picked.format(DateTimeFormatter.ISO_LOCAL_DATE)
+            form.setRecurrenceEndDate(iso)
+            // 截止日期 -> 次数：数出到该日期为止总共有几场
+            draftTodo()?.let { todo ->
+                form.setRecurrenceCount(RecurrenceExpander.countUntil(todo, picked, zone))
+            }
+        },
+        onClear = {
+            form.setRecurrenceEndDate(null)
+            form.setRecurrenceCount(null)
+        },
+    )
+
+    // 3) 重复次数：填了就反推截止日期
+    OutlinedTextField(
+        value = countText,
+        onValueChange = { raw ->
+            val digits = raw.filter { it.isDigit() }.take(4)
+            val count = digits.toIntOrNull()
+            form.setRecurrenceCount(count)
+            if (count == null) {
+                // 清空次数就同时清掉由它算出的截止日期，避免留下自相矛盾的状态
+                form.setRecurrenceEndDate(null)
+            } else if (count > 0) {
+                val todo = draftTodo()
+                if (todo != null) {
+                    form.setRecurrenceEndDate(
+                        RecurrenceExpander.endDateForCount(todo, count, zone)
+                            ?.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    )
+                }
+            }
+        },
+        label = { Text("重复次数") },
+        placeholder = { Text("留空表示不限") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TAG_RECURRENCE_COUNT),
+    )
+
     Text(
         text = buildString {
-            append("起始 ")
-            append(startDate?.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) ?: "—")
-            append("，")
-            append(
-                when {
-                    state.recurrenceCount != null && endText.isNotEmpty() ->
-                        "共 ${state.recurrenceCount} 次，最后一场 $endText"
-                    state.recurrenceCount != null -> "共 ${state.recurrenceCount} 次"
-                    endText.isNotEmpty() -> "截止 $endText"
-                    else -> "不限次数与截止日期"
-                },
-            )
+            append("首次 ")
+            append(effectiveStart?.format(SHORT_DATE) ?: "—")
+            append("；")
+            when {
+                state.recurrenceCount != null && endDate != null ->
+                    append("共 ${state.recurrenceCount} 次，最后一场 " + endDate.format(SHORT_DATE))
+                state.recurrenceCount != null -> append("共 ${state.recurrenceCount} 次")
+                endDate != null -> append("截止 " + endDate.format(SHORT_DATE))
+                else -> append("不限次数与截止日期")
+            }
         },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.testTag(TAG_RECURRENCE_SUMMARY),
     )
+}
+
+private val SHORT_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("M 月 d 日")
+
+/** 解析 yyyy-MM-dd，失败返回 null（数据异常时不该崩）。 */
+private fun parseIsoDate(text: String): LocalDate? =
+    runCatching { LocalDate.parse(text, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
+
+/**
+ * 一个「点开选日期」的只读字段。
+ *
+ * 比裸的 OutlinedTextField 更明确：既显示当前值，也给出留空时的默认语义，
+ * 并提供清除按钮把该字段恢复成「不限」。
+ */
+@Composable
+private fun DateFieldButton(
+    label: String,
+    value: LocalDate?,
+    hint: String,
+    tag: String,
+    onPick: (LocalDate) -> Unit,
+    onClear: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedButton(
+            onClick = { open = true },
+            modifier = Modifier
+                .weight(1f)
+                .testTag(tag),
+        ) {
+            Text("$label：${value?.format(SHORT_DATE) ?: "未设置"}")
+        }
+        if (value != null) {
+            TextButton(onClick = onClear) { Text("清除") }
+        }
+    }
+    Text(
+        text = hint,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    if (open) {
+        SimpleDatePickerDialog(
+            initial = value ?: LocalDate.now(),
+            onDismiss = { open = false },
+            onConfirm = { picked ->
+                onPick(picked)
+                open = false
+            },
+        )
+    }
 }
 
 /** 周期按钮的文案。 */
@@ -513,3 +590,103 @@ private fun weekDaysSummary(days: Set<DayOfWeek>): String =
 /** 月重复选中项的汇总文案。 */
 private fun monthDaysSummary(days: Set<Int>): String =
     if (days.isEmpty()) "未选择" else "已选：" + days.sorted().joinToString("、") + " 号"
+
+/**
+ * 简单的日期选择对话框：日历 + 年/月/日三个输入框。
+ *
+ * 与时间字段用的那个是同一套交互（见 DateTimePickerField 里的 DatePickerDialog），
+ * 这里独立一份是为了不让表单依赖时间字段的实现细节。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SimpleDatePickerDialog(
+    initial: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+) {
+    var yearText by remember { mutableStateOf(initial.year.toString()) }
+    var monthText by remember { mutableStateOf(initial.monthValue.toString()) }
+    var dayText by remember { mutableStateOf(initial.dayOfMonth.toString()) }
+    val parsed = DateFormats.parseDateParts(yearText, monthText, dayText)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        // 不设 title：DatePicker 自带头部，外面再套会重复
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                DatePicker(
+                    state = rememberDatePickerState(
+                        initialSelectedDateMillis = initial
+                            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli(),
+                    ),
+                    showModeToggle = false,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("手动输入", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = yearText,
+                        onValueChange = { yearText = it.filter { c -> c.isDigit() }.take(4) },
+                        label = { Text("年") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .testTag("simple_date_year"),
+                    )
+                    OutlinedTextField(
+                        value = monthText,
+                        onValueChange = { monthText = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("月") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("simple_date_month"),
+                    )
+                    OutlinedTextField(
+                        value = dayText,
+                        onValueChange = { dayText = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("日") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("simple_date_day"),
+                    )
+                }
+                Text(
+                    text = parsed?.let { "将设置为 " + DateFormats.fullDate(it) }
+                        ?: "请填写合法的年月日（例如 2026 / 1 / 1）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (parsed == null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { parsed?.let(onConfirm) },
+                enabled = parsed != null,
+                modifier = Modifier.testTag("simple_date_confirm"),
+            ) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("simple_date_cancel"),
+            ) { Text("取消") }
+        },
+    )
+}

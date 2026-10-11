@@ -41,6 +41,8 @@ data class DraftFormState(
     val weekDays: WeekDays = emptySet(),
     /** 月重复选中的几号。 */
     val monthDays: MonthDays = emptySet(),
+    /** 重复生效起始日期 yyyy-MM-dd；为空表示从待办起始日生效。 */
+    val recurrenceStartDate: String? = null,
     /** 重复截止日期 yyyy-MM-dd；为空表示不限。 */
     val recurrenceEndDate: String? = null,
     /** 重复总次数；为空表示不限。 */
@@ -98,6 +100,7 @@ class DraftFormStateHolder(
         recurrence: Recurrence = Recurrence.NONE,
         weekDays: WeekDays = emptySet(),
         monthDays: MonthDays = emptySet(),
+        recurrenceStartDate: String? = null,
         recurrenceEndDate: String? = null,
         recurrenceCount: Int? = null,
     ) {
@@ -120,6 +123,7 @@ class DraftFormStateHolder(
                     emptySet()
                 }
             },
+            recurrenceStartDate = recurrenceStartDate,
             recurrenceEndDate = recurrenceEndDate,
             recurrenceCount = recurrenceCount,
             monthDays = monthDays.ifEmpty {
@@ -216,6 +220,11 @@ class DraftFormStateHolder(
         _state.value = _state.value.copy(recurrenceCount = value?.takeIf { it > 0 })
     }
 
+    /** 设置重复生效起始日期（yyyy-MM-dd）；null 表示从待办起始日生效。 */
+    fun setRecurrenceStartDate(value: String?) {
+        _state.value = _state.value.copy(recurrenceStartDate = value?.takeIf { it.isNotBlank() })
+    }
+
     /** 设置重复截止日期（yyyy-MM-dd）；null 表示不限。 */
     fun setRecurrenceEndDate(value: String?) {
         _state.value = _state.value.copy(recurrenceEndDate = value?.takeIf { it.isNotBlank() })
@@ -264,6 +273,7 @@ class DraftFormStateHolder(
             recurrence = current.recurrence,
             weekDays = current.weekDays,
             monthDays = current.monthDays,
+            recurrenceStartDate = current.recurrenceStartDate,
             recurrenceEndDate = current.recurrenceEndDate,
             recurrenceCount = current.recurrenceCount,
         )

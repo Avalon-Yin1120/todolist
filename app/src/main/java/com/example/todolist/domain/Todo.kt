@@ -25,6 +25,8 @@ data class Todo(
     val recurrence: Recurrence = Recurrence.NONE,
     val weekDays: WeekDays = emptySet(),
     val monthDays: MonthDays = emptySet(),
+    /** 重复生效起始日期（含当天），格式 yyyy-MM-dd；为空表示从待办自身的起始日生效。 */
+    val recurrenceStartDate: String? = null,
     /** 重复截止日期（含当天），格式 yyyy-MM-dd；为空表示不限。 */
     val recurrenceEndDate: String? = null,
     /** 重复总次数（含第一次）；为空或 <=0 表示不限。 */
