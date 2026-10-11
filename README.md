@@ -244,3 +244,34 @@ $pkg='com.example.todolist'
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
 以及把 ViewModel 里常驻的每秒 `while(true)` 轮询改成按需冷流
 （无限循环会让 `runTest` 的虚拟调度器永远不空闲）。
+
+---
+
+## 8. 切换动画的验证方法
+
+`adb` 单张截图约 600ms，正常切换动画只有 280ms，靠连拍抓不到过渡帧。
+为此加了一个**只在 debug 生效**的开关：
+
+```powershell
+# 把切换动画放慢到 2.5 秒，便于观测
+adb shell setprop debug.todo.anim_ms 2500
+adb shell am force-stop com.example.todolist
+adb shell am start -n com.example.todolist/.MainActivity
+
+# 跑验证脚本：连拍截图并对比帧间差异
+python tools\verify_swipe_animation.py
+
+# 复位
+adb shell setprop debug.todo.anim_ms 0
+```
+
+脚本判据：若存在过渡动画，就必然能抓到「与切换前、切换后都明显不同」的中间帧。
+
+实测结果：
+
+| 场景 | 中间帧 vs 切换前 | 中间帧 vs 切换后 | 判定 |
+|---|---|---|---|
+| 日→周（动画开） | 平均差 5.2 | 平均差 0.1 | **过渡帧**，且画面里旧周与新周并存、水平位移 |
+| 日→周（系统动画缩放=0） | 平均差 5.2 | 平均差 0.1 | 第一帧就已是切换后状态，符合预期 |
+
+发布构建里 `TodoRouteAnim.durationMs` 恒定返回 280，系统属性完全不参与。

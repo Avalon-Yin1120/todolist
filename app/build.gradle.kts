@@ -41,6 +41,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 需要 BuildConfig.DEBUG 来判断调试构建（用于只在 debug 生效的测试开关）
+        buildConfig = true
     }
 
     packaging {

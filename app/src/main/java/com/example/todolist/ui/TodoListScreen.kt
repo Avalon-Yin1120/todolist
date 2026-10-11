@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.todolist.BuildConfig
 import com.example.todolist.domain.ListOrdering
 import com.example.todolist.domain.RecurrenceExpander
 import com.example.todolist.domain.ReminderTime
@@ -60,12 +61,37 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /** 列表页入口：把 ViewModel 状态接到纯展示组件上。 */
+/** 页面切换动画的时长，允许在调试构建里被放慢以便观测。 */
+object TodoRouteAnim {
+
+    /** 默认时长：足够看出方向，又不拖沓。 */
+    const val DEFAULT_MS = 280
+
+    /**
+     * 调试用覆盖值。
+     *
+     * 只在调试构建里通过 `adb shell setprop debug.todo.anim_ms 2500` 生效：
+     * 截图连拍的间隔约 600ms，正常时长（280ms）根本抓不到过渡帧，
+     * 放慢之后才能客观验证动画确实存在。发布构建始终返回默认值。
+     */
+    val durationMs: Int
+        get() {
+            if (!BuildConfig.DEBUG) return DEFAULT_MS
+            return runCatching {
+                System.getProperty(PROP_ANIM_MS)?.toIntOrNull()
+            }.getOrNull()?.takeIf { it in 200..10_000 } ?: DEFAULT_MS
+        }
+
+    private const val PROP_ANIM_MS = "debug.todo.anim_ms"
+}
+
 @Composable
 fun TodoRoute(
     viewModel: TodoViewModel,
     onRequestExactAlarmPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
 ) {
+    val animMs = TodoRouteAnim.durationMs
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     // 时间由界面按需收集（每秒一次），ViewModel 不做常驻轮询
     val now by viewModel.timeFlow.collectAsStateWithLifecycle(initialValue = viewModel.now())
@@ -96,10 +122,10 @@ fun TodoRoute(
         targetState = screen,
         transitionSpec = {
             if (targetState == Screen.SETTINGS) {
-                slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(260)) togetherWith
-                    fadeOut(tween(180))
+                slideInHorizontally(tween(animMs)) { it / 3 } + fadeIn(tween(animMs)) togetherWith
+                    fadeOut(tween(animMs))
             } else {
-                fadeIn(tween(220)) togetherWith slideOutHorizontally(tween(260)) { it / 3 } + fadeOut(tween(180))
+                fadeIn(tween(animMs)) togetherWith slideOutHorizontally(tween(animMs)) { it / 3 } + fadeOut(tween(animMs))
             }
         },
         label = "screen",
@@ -130,6 +156,7 @@ fun TodoRoute(
             uiState = uiState,
             now = now,
             zone = zone,
+            animMs = animMs,
             snackbarHostState = snackbarHostState,
             onAdd = viewModel::openCreateForm,
             onToggleDone = viewModel::toggleDone,
@@ -159,6 +186,8 @@ fun TodoListScreen(
     uiState: TodoUiState,
     now: Long,
     zone: ZoneId,
+    /** 切换动画时长；调试构建可通过系统属性放慢，便于观测与验证 */
+    animMs: Int,
     snackbarHostState: SnackbarHostState,
     onAdd: () -> Unit,
     onToggleDone: (Todo) -> Unit,
@@ -279,11 +308,11 @@ fun TodoListScreen(
                         transitionSpec = {
                             val direction = if (shiftDirection >= 0) 1 else -1
                             (
-                                slideInHorizontally(tween(280)) { width -> direction * width } +
-                                    fadeIn(tween(200))
+                                slideInHorizontally(tween(animMs)) { width -> direction * width } +
+                                    fadeIn(tween(animMs))
                                 ) togetherWith (
-                                slideOutHorizontally(tween(280)) { width -> -direction * width } +
-                                    fadeOut(tween(200))
+                                slideOutHorizontally(tween(animMs)) { width -> -direction * width } +
+                                    fadeOut(tween(animMs))
                                 )
                         },
                         label = "period",
