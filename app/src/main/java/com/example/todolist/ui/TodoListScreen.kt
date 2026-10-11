@@ -1,5 +1,12 @@
 package com.example.todolist.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,7 +26,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +41,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -49,10 +57,7 @@ import com.example.todolist.domain.RecurrenceExpander
 import com.example.todolist.domain.ReminderTime
 import com.example.todolist.domain.Todo
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.YearMonth
 import java.time.ZoneId
-import java.util.Locale
 
 /** 列表页入口：把 ViewModel 状态接到纯展示组件上。 */
 @Composable
@@ -83,32 +88,58 @@ fun TodoRoute(
         viewModel.consumeNotice()
     }
 
-    TodoListScreen(
-        uiState = uiState,
-        now = now,
-        zone = viewModel.zone(),
-        snackbarHostState = snackbarHostState,
-        onAdd = viewModel::openCreateForm,
-        onToggleDone = viewModel::toggleDone,
-        onEdit = viewModel::openEditForm,
-        onDelete = viewModel::requestDelete,
-        onConfirmDelete = viewModel::confirmDelete,
-        onResolveScope = viewModel::resolveRecurrenceScope,
-        onDismissDialog = viewModel::dismissDialog,
-        onSelectTab = viewModel::selectTab,
-        onSelectDate = viewModel::selectDate,
-        onShiftDate = viewModel::shiftDate,
-        onShiftMonth = viewModel::shiftMonth,
-        onSetGrouping = viewModel::setGrouping,
-        onOpenSettings = viewModel::openSettings,
-        onCloseSettings = viewModel::closeSettings,
-        onChangeSetting = viewModel::changeSetting,
-        onRequestExactAlarmPermission = onRequestExactAlarmPermission,
-        onRequestNotificationPermission = onRequestNotificationPermission,
-        form = viewModel.form,
-        onDismissForm = viewModel::dismissForm,
-        onSubmitForm = viewModel::submitForm,
-    )
+    val zone = viewModel.zone()
+    val screen = uiState.screen
+    val settings = uiState.settings
+
+    AnimatedContent(
+        targetState = screen,
+        transitionSpec = {
+            if (targetState == Screen.SETTINGS) {
+                slideInHorizontally(tween(260)) { it / 3 } + fadeIn(tween(260)) togetherWith
+                    fadeOut(tween(180))
+            } else {
+                fadeIn(tween(220)) togetherWith slideOutHorizontally(tween(260)) { it / 3 } + fadeOut(tween(180))
+            }
+        },
+        label = "screen",
+    ) { target ->
+        if (target == Screen.SETTINGS) {
+            SettingsScreen(
+                state = settings,
+                onChange = viewModel::changeSetting,
+                onBack = viewModel::closeSettings,
+                exactAlarmAllowed = uiState.canScheduleExact,
+                onRequestExactAlarmPermission = onRequestExactAlarmPermission,
+            )
+            return@AnimatedContent
+        }
+
+        TodoListScreen(
+            uiState = uiState,
+            now = now,
+            zone = zone,
+            snackbarHostState = snackbarHostState,
+            onAdd = viewModel::openCreateForm,
+            onToggleDone = viewModel::toggleDone,
+            onEdit = viewModel::openEditForm,
+            onDelete = viewModel::requestDelete,
+            onConfirmDelete = viewModel::confirmDelete,
+            onResolveScope = viewModel::resolveRecurrenceScope,
+            onDismissDialog = viewModel::dismissDialog,
+            onSelectTab = viewModel::selectTab,
+            onSelectDate = viewModel::selectDate,
+            onShiftDate = viewModel::shiftDate,
+            onShiftMonth = viewModel::shiftMonth,
+            onSetGrouping = viewModel::setGrouping,
+            onOpenSettings = viewModel::openSettings,
+            onRequestExactAlarmPermission = onRequestExactAlarmPermission,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            form = viewModel.form,
+            onDismissForm = viewModel::dismissForm,
+            onSubmitForm = viewModel::submitForm,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -131,14 +162,15 @@ fun TodoListScreen(
     onShiftMonth: (Long) -> Unit,
     onSetGrouping: (ListGrouping) -> Unit,
     onOpenSettings: () -> Unit,
-    onCloseSettings: () -> Unit,
-    onChangeSetting: (SettingsChange) -> Unit,
     onRequestExactAlarmPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     form: DraftFormStateHolder,
     onDismissForm: () -> Unit,
     onSubmitForm: () -> Unit,
 ) {
+    // 滑动方向：+1 表示往「后一天/后一周/后一月」翻，用于决定切换动画方向
+    var shiftDirection by remember { mutableIntStateOf(0) }
+
     Scaffold(
         topBar = {
             TopHeader(
@@ -146,6 +178,7 @@ fun TodoListScreen(
                 now = now,
                 zone = zone,
                 onOpenSettings = onOpenSettings,
+                onAdd = onAdd,
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -181,14 +214,6 @@ fun TodoListScreen(
                 )
             }
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAdd,
-                modifier = Modifier.testTag(TAG_ADD_FAB),
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "新增待办")
-            }
-        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -201,8 +226,8 @@ fun TodoListScreen(
                 onRequestNotificationPermission = onRequestNotificationPermission,
             )
 
-            when (uiState.tab) {
-                NavTab.TODO -> TodoOverview(
+            if (uiState.tab == NavTab.TODO) {
+                TodoOverview(
                     uiState = uiState,
                     now = now,
                     zone = zone,
@@ -211,45 +236,72 @@ fun TodoListScreen(
                     onDelete = onDelete,
                     onSetGrouping = onSetGrouping,
                 )
-
-                NavTab.DAY -> SwipeablePager(
-                    onSwipeLeft = { onShiftDate(1) },
-                    onSwipeRight = { onShiftDate(-1) },
-                ) {
-                    DailyView(
-                        todos = uiState.todos,
-                        date = uiState.selectedDate,
-                        now = now,
-                        zone = zone,
-                        onToggleDone = onToggleDone,
-                        onEdit = onEdit,
-                        onDelete = onDelete,
-                    )
+            } else {
+                // 日历类视图：带左右滑动 + 切换动画
+                val periodKey: Any = when (uiState.tab) {
+                    NavTab.DAY -> uiState.selectedDate
+                    NavTab.WEEK -> CalendarLayout.weekStart(uiState.selectedDate)
+                    NavTab.MONTH -> java.time.YearMonth.from(uiState.selectedDate)
+                    NavTab.TODO -> uiState.selectedDate
                 }
 
-                NavTab.WEEK -> SwipeablePager(
-                    onSwipeLeft = { onShiftDate(7) },
-                    onSwipeRight = { onShiftDate(-7) },
+                SwipeablePager(
+                    onSwipeLeft = {
+                        shiftDirection = 1
+                        when (uiState.tab) {
+                            NavTab.DAY -> onShiftDate(1)
+                            NavTab.WEEK -> onShiftDate(7)
+                            else -> onShiftMonth(1)
+                        }
+                    },
+                    onSwipeRight = {
+                        shiftDirection = -1
+                        when (uiState.tab) {
+                            NavTab.DAY -> onShiftDate(-1)
+                            NavTab.WEEK -> onShiftDate(-7)
+                            else -> onShiftMonth(-1)
+                        }
+                    },
                 ) {
-                    WeeklyView(
-                        todos = uiState.todos,
-                        anchor = uiState.selectedDate,
-                        zone = zone,
-                        onPickDate = onSelectDate,
-                    )
-                }
-
-                NavTab.MONTH -> SwipeablePager(
-                    onSwipeLeft = { onShiftMonth(1) },
-                    onSwipeRight = { onShiftMonth(-1) },
-                ) {
-                    MonthlyView(
-                        todos = uiState.todos,
-                        anchor = uiState.selectedDate,
-                        zone = zone,
-                        today = CalendarLayout.toLocalDate(now, zone),
-                        onPickDate = onSelectDate,
-                    )
+                    AnimatedContent(
+                        targetState = periodKey,
+                        transitionSpec = {
+                            val direction = if (shiftDirection >= 0) 1 else -1
+                            (
+                                slideInHorizontally(tween(280)) { width -> direction * width } +
+                                    fadeIn(tween(200))
+                                ) togetherWith (
+                                slideOutHorizontally(tween(280)) { width -> -direction * width } +
+                                    fadeOut(tween(200))
+                                )
+                        },
+                        label = "period",
+                    ) { _ ->
+                        when (uiState.tab) {
+                            NavTab.DAY -> DailyView(
+                                todos = uiState.todos,
+                                date = uiState.selectedDate,
+                                now = now,
+                                zone = zone,
+                                onToggleDone = onToggleDone,
+                                onEdit = onEdit,
+                                onDelete = onDelete,
+                            )
+                            NavTab.WEEK -> WeeklyView(
+                                todos = uiState.todos,
+                                anchor = uiState.selectedDate,
+                                zone = zone,
+                                onPickDate = onSelectDate,
+                            )
+                            else -> MonthlyView(
+                                todos = uiState.todos,
+                                anchor = uiState.selectedDate,
+                                zone = zone,
+                                today = CalendarLayout.toLocalDate(now, zone),
+                                onPickDate = onSelectDate,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -279,20 +331,13 @@ fun TodoListScreen(
 
             null -> Unit
         }
-
-        if (uiState.settingsOpen) {
-            SettingsDialog(
-                state = uiState.settings,
-                onChange = onChangeSetting,
-                onDismiss = onCloseSettings,
-                exactAlarmAllowed = uiState.canScheduleExact,
-                onRequestExactAlarmPermission = onRequestExactAlarmPermission,
-            )
-        }
     }
 }
 
-/** 顶部：居中的标题、紧挨其下的倒计时；左右分别是设置与新增。 */
+/**
+ * 顶部：标题居中，左右各一个对称的图标按钮（设置 / 新增）；
+ * 标题下方一行显示当前视图对应的日期与倒计时信息。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TopHeader(
@@ -300,6 +345,7 @@ private fun TopHeader(
     now: Long,
     zone: ZoneId,
     onOpenSettings: () -> Unit,
+    onAdd: () -> Unit,
 ) {
     val pending = uiState.todos.filterNot { it.isDone }
     val overdue = pending.filter { ReminderTime.remindAt(it.startAt, it.leadMinutes) <= now }
@@ -314,6 +360,7 @@ private fun TopHeader(
                 )
             },
             navigationIcon = {
+                // 左上：设置
                 IconButton(
                     onClick = onOpenSettings,
                     modifier = Modifier.testTag(TAG_SETTINGS_BUTTON),
@@ -322,14 +369,20 @@ private fun TopHeader(
                 }
             },
             actions = {
-                TextButton(onClick = { /* 新增按钮在右下角 FAB */ }) { Text("") }
+                // 右上：新增。与设置左右对称，且不再悬浮遮挡列表内容
+                IconButton(
+                    onClick = onAdd,
+                    modifier = Modifier.testTag(TAG_ADD_FAB),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "新增待办")
+                }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                 containerColor = MaterialTheme.colorScheme.surface,
             ),
         )
 
-        // 紧挨标题下方：倒计时 + 待处理条数
+        // 当前时间范围：明确告诉用户「现在看的是哪一天 / 哪一周 / 哪一月」
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.fillMaxWidth(),
@@ -341,21 +394,36 @@ private fun TopHeader(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
+                    text = periodLabel(uiState, zone),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.testTag(TAG_PERIOD_LABEL),
+                )
+                Text(
                     text = countdownText(pending, overdue, now, zone),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.testTag(TAG_COUNTDOWN),
                 )
-                if (pending.isNotEmpty()) {
-                    Text(
-                        text = "共 ${pending.size} 项待办，其中 ${overdue.size} 项已到提醒时间",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
+    }
+}
+
+/** 当前视图的时间范围文案。 */
+private fun periodLabel(uiState: TodoUiState, zone: ZoneId): String {
+    val date = uiState.selectedDate
+    return when (uiState.tab) {
+        NavTab.TODO -> "全部待办"
+        NavTab.DAY -> DateFormats.fullDate(date)
+        NavTab.WEEK -> {
+            val start = CalendarLayout.weekStart(date)
+            val end = start.plusDays(6)
+            DateFormats.dateRange(start, end)
+        }
+        NavTab.MONTH -> DateFormats.monthLabel(date)
     }
 }
 
@@ -382,11 +450,10 @@ private fun countdownText(
         .map { it to RecurrenceExpander.nextOccurrenceAfter(it, now, zone) }
         .filter { it.second != null }
         .minByOrNull { it.second!! }
-        ?: return "暂无即将到来的待办"
 
+    if (next == null || next.second == null) return "共 ${pending.size} 项待办"
     val target = next.second!!
-    val todo = RecurrenceExpander.occurrenceOn(next.first, CalendarLayout.toLocalDate(target, zone), zone)
-    return "距离下次待办还有 ${formatCountdown(target - now)} · ${todo.name}"
+    return "距离下次待办还有 ${formatCountdown(target - now)} · ${next.first.name}"
 }
 
 private fun formatCountdown(millis: Long): String {
@@ -443,7 +510,7 @@ private fun TodoOverview(
                     Text("还没有待办事项", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "点击右下角 + 添加第一条待办",
+                        text = "点击右上角 + 添加第一条待办",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -586,8 +653,11 @@ const val TAG_TODO_ROW = "todo_row"
 const val TAG_TODO_CHECKBOX = "todo_checkbox"
 const val TAG_NAME_FIELD = "todo_name_field"
 const val TAG_LEAD_FIELD = "todo_lead_field"
+const val TAG_REMINDER_PREVIEW = "todo_reminder_preview"
+const val TAG_QUICK_LEAD_PREFIX = "quick_lead_"
 const val TAG_SAVE_BUTTON = "todo_save_button"
 const val TAG_TITLE = "app_title"
+const val TAG_PERIOD_LABEL = "period_label"
 const val TAG_COUNTDOWN = "countdown_text"
 const val TAG_TAB_TODO = "tab_todo"
 const val TAG_TAB_DAY = "tab_day"
@@ -601,22 +671,18 @@ const val TAG_CANCEL_DELETE = "cancel_delete"
 const val TAG_SCOPE_THIS = "scope_this"
 const val TAG_SCOPE_ALL = "scope_all"
 
-/** 生成「带待办 id」的测试标签，用于精确定位某一行。 */
-fun tagForTodo(base: String, todoId: Long): String = "$base#$todoId"
-
 /** 提醒方式与周期的测试标签。 */
 const val TAG_MODE_NOTIFICATION = "mode_notification"
 const val TAG_MODE_ALARM = "mode_alarm"
 const val TAG_RECURRENCE_PREFIX = "recurrence_"
+const val TAG_WEEKDAY_PREFIX = "weekday_"
+const val TAG_MONTHDAY_PREFIX = "monthday_"
+const val TAG_SETTINGS_BUTTON = "settings_button"
+const val TAG_SETTINGS_SCREEN = "settings_screen"
+const val TAG_SETTINGS_BACK = "settings_back"
+
+/** 生成「带 id」的测试标签，用于精确定位某一行。 */
+fun tagForTodo(base: String, todoId: Long): String = "$base#$todoId"
 
 /** 保留旧标签常量以免既有测试引用失效。 */
 const val TAG_EXACT_SWITCH = "todo_exact_switch"
-
-/** 让列表工具使用的月份描述保持一致。 */
-internal fun monthLabel(month: YearMonth): String = month.monthValue.toString() + "月"
-
-internal fun fullDateLabel(date: LocalDate): String =
-    date.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd EEEE", Locale.SIMPLIFIED_CHINESE))
-
-internal fun localDateTimeOf(epochMillis: Long, zone: ZoneId): LocalDateTime =
-    java.time.Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDateTime()

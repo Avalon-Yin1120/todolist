@@ -39,10 +39,38 @@ object RecurrenceExpander {
         if (date.isBefore(startDate)) return false
         return when (todo.recurrence) {
             Recurrence.DAILY -> true
-            Recurrence.WEEKLY -> startDate.dayOfWeek == date.dayOfWeek
-            Recurrence.MONTHLY -> occursOnSameDayOfMonth(startDate, date)
+            // 周重复按用户选中的星期几判断；没选过则回落到开始日期的星期
+            Recurrence.WEEKLY -> effectiveWeekDays(todo, startDate).contains(date.dayOfWeek)
+            // 月重复按用户选中的号数判断；没选过则回落到开始日期的号数
+            Recurrence.MONTHLY -> occursOnSelectedMonthDay(todo, startDate, date)
             Recurrence.NONE -> startDate == date
         }
+    }
+
+    /**
+     * 周重复实际生效的星期集合。
+     *
+     * 用户没选任何一天时回落到开始日期的星期，这样从旧版本升级上来的数据
+     * （只有「每周」而没有具体星期）行为不变。
+     */
+    fun effectiveWeekDays(todo: Todo, startDate: LocalDate): Set<DayOfWeek> =
+        todo.weekDays.ifEmpty { setOf(startDate.dayOfWeek) }
+
+    /** 月重复实际生效的号数集合。 */
+    fun effectiveMonthDays(todo: Todo, startDate: LocalDate): Set<Int> =
+        todo.monthDays.ifEmpty { setOf(startDate.dayOfMonth) }
+
+    /**
+     * 月重复是否命中某一天。
+     *
+     * 选中 31 号而该月没有 31 号时，落到该月最后一天——
+     * 否则「每月 31 号」在 2 月、4 月会整月不出现，不符合用户预期。
+     */
+    private fun occursOnSelectedMonthDay(todo: Todo, startDate: LocalDate, date: LocalDate): Boolean {
+        val selected = effectiveMonthDays(todo, startDate)
+        if (date.dayOfMonth in selected) return true
+        val lastDayOfMonth = date.with(TemporalAdjusters.lastDayOfMonth()).dayOfMonth
+        return date.dayOfMonth == lastDayOfMonth && selected.any { it > lastDayOfMonth }
     }
 
     /**
@@ -107,14 +135,34 @@ object RecurrenceExpander {
         return null
     }
 
-    private fun occursOnSameDayOfMonth(startDate: LocalDate, date: LocalDate): Boolean {
-        // 每月同一天；起始日大于该月天数时（如 31 日）落到该月最后一天
-        val lastDayOfMonth = date.with(TemporalAdjusters.lastDayOfMonth()).dayOfMonth
-        val target = minOf(startDate.dayOfMonth, lastDayOfMonth)
-        return date.dayOfMonth == target
+
+    /**
+     * 供界面展示的周期描述。
+     *
+     * 带上具体的周几/几号，用户一眼能看出「每周一、三、五」而不是笼统的「每周」。
+     */
+    fun describe(todo: Todo, zone: ZoneId): String = when (todo.recurrence) {
+        Recurrence.NONE -> "不重复"
+        Recurrence.DAILY -> "每天"
+        Recurrence.WEEKLY -> {
+            val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
+            val days = effectiveWeekDays(todo, startDate)
+            if (days.size == 7) {
+                "每天"
+            } else {
+                "每" + RecurrenceOptions.WEEK_ORDER
+                    .filter { it in days }
+                    .joinToString("、") { RecurrenceOptions.shortLabel(it) }
+            }
+        }
+        Recurrence.MONTHLY -> {
+            val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
+            val days = effectiveMonthDays(todo, startDate).sorted()
+            "每月 " + days.joinToString("、") + " 号"
+        }
     }
 
-    /** 供界面展示的周期描述。 */
+    /** 粗略描述，仅按规则本身（用于表单上还没选具体日子时的提示）。 */
     fun describe(recurrence: Recurrence): String = when (recurrence) {
         Recurrence.NONE -> "不重复"
         Recurrence.DAILY -> "每天"

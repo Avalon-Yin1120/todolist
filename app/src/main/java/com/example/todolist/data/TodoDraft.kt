@@ -1,10 +1,12 @@
 package com.example.todolist.data
 
 import com.example.todolist.domain.Clock
+import com.example.todolist.domain.MonthDays
 import com.example.todolist.domain.Recurrence
 import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderTime
 import com.example.todolist.domain.Todo
+import com.example.todolist.domain.WeekDays
 
 /**
  * 表单输入到落库之间的中间态。
@@ -18,6 +20,10 @@ data class TodoDraft(
     val leadMinutes: Int,
     val mode: ReminderMode = ReminderMode.NOTIFICATION,
     val recurrence: Recurrence = Recurrence.NONE,
+    /** 周重复选中的星期几。 */
+    val weekDays: WeekDays = emptySet(),
+    /** 月重复选中的几号。 */
+    val monthDays: MonthDays = emptySet(),
 )
 
 /**
@@ -38,6 +44,8 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
             leadMinutes = leadMinutes,
             mode = mode,
             recurrence = recurrence,
+            weekDays = weekDays,
+            monthDays = monthDays,
             isDone = false,
             remindedOccurrenceStart = null,
             createdAt = now,
@@ -48,7 +56,9 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
     val scheduleChanged = existing.startAt != startAt ||
         existing.leadMinutes != leadMinutes ||
         existing.mode != mode ||
-        existing.recurrence != recurrence
+        existing.recurrence != recurrence ||
+        existing.weekDays != weekDays ||
+        existing.monthDays != monthDays
     val recurrenceClosed = existing.recurrence.isRecurring && !recurrence.isRecurring
 
     return existing.copy(
@@ -58,6 +68,8 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
         leadMinutes = leadMinutes,
         mode = mode,
         recurrence = recurrence,
+        weekDays = weekDays,
+        monthDays = monthDays,
         recurrenceExceptions = if (recurrenceClosed) emptyList() else existing.recurrenceExceptions,
         remindedOccurrenceStart = if (scheduleChanged) null else existing.remindedOccurrenceStart,
         updatedAt = now,

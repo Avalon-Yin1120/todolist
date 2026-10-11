@@ -2,6 +2,7 @@ package com.example.todolist.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,15 +12,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -29,8 +30,14 @@ import com.example.todolist.domain.FormError
 import com.example.todolist.domain.FormValidator
 import com.example.todolist.domain.Recurrence
 import com.example.todolist.domain.RecurrenceExpander
+import com.example.todolist.domain.RecurrenceOptions
 import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderTime
+import com.example.todolist.domain.Todo
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * 新增 / 编辑待办的表单。
@@ -98,9 +105,11 @@ fun TodoEditSheet(
                 Text("提前提醒", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     QUICK_LEADS.forEach { minutes ->
-                        AssistChip(
+                        FilterChip(
+                            selected = state.leadMinutes == minutes,
                             onClick = { form.setLeadMinutes(minutes) },
                             label = { Text(quickLeadLabel(minutes)) },
+                            modifier = Modifier.testTag("$TAG_QUICK_LEAD_PREFIX$minutes"),
                         )
                     }
                 }
@@ -125,6 +134,7 @@ fun TodoEditSheet(
                     text = "提醒时间：" + reminderPreview(state),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(TAG_REMINDER_PREVIEW),
                 )
 
                 // 提醒方式：用户选「怎么提醒我」，不涉及「用哪种系统 API」
@@ -170,15 +180,83 @@ fun TodoEditSheet(
                         FilterChip(
                             selected = state.recurrence == option,
                             onClick = { form.setRecurrence(option) },
-                            label = {
-                                Text(RecurrenceExpander.describe(option).removePrefix("不"))
-                            },
+                            label = { Text(RecurrenceExpander.describe(option).removePrefix("不")) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag(TAG_RECURRENCE_PREFIX + option.name),
                         )
                     }
                 }
+
+                // 周重复：精确到星期几
+                if (state.recurrence == Recurrence.WEEKLY) {
+                    Text(
+                        text = "重复于哪些天",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        RecurrenceOptions.WEEK_ORDER.forEach { day ->
+                            FilterChip(
+                                selected = day in state.weekDays,
+                                onClick = { form.toggleWeekDay(day) },
+                                label = { Text(RecurrenceOptions.shortLabel(day)) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag(TAG_WEEKDAY_PREFIX + day.name),
+                            )
+                        }
+                    }
+                    Text(
+                        text = "已选：" + weekDaysSummary(state.weekDays),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // 月重复：精确到几号
+                if (state.recurrence == Recurrence.MONTHLY) {
+                    Text(
+                        text = "重复于每月哪几天",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    RecurrenceOptions.MONTH_DAYS.chunked(7).forEach { week ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            week.forEach { day ->
+                                OutlinedButton(
+                                    onClick = { form.toggleMonthDay(day) },
+                                    contentPadding = PaddingValues(0.dp),
+                                    colors = if (day in state.monthDays) {
+                                        ButtonDefaults.outlinedButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        )
+                                    } else {
+                                        ButtonDefaults.outlinedButtonColors()
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag(TAG_MONTHDAY_PREFIX + day),
+                                ) { Text("$day", style = MaterialTheme.typography.labelMedium) }
+                            }
+                            // 末行补齐占位，避免按钮被拉伸
+                            repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    Text(
+                        text = monthDaysSummary(state.monthDays) +
+                            "（选 29/30/31 时，没有该日期的月份落到当月最后一天）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
                 if (state.recurrence.isRecurring) {
                     Text(
                         text = "重复待办修改或删除时会询问：仅这一次，还是整个系列",
@@ -213,17 +291,43 @@ private fun quickLeadLabel(minutes: Int): String = when (minutes) {
 /** 表单里显示的提醒时刻预览。 */
 private fun reminderPreview(state: DraftFormState): String {
     val start = state.startAt ?: return "—"
+    val zone = ZoneId.systemDefault()
     val remindAt = ReminderTime.remindAt(start, state.leadMinutes)
-    val formatter = java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")
-    val zoned = java.time.Instant.ofEpochMilli(remindAt).atZone(java.time.ZoneId.systemDefault())
+    val zoned = Instant.ofEpochMilli(remindAt).atZone(zone)
     val suffix = when (state.mode) {
         ReminderMode.ALARM -> "（闹钟式）"
         ReminderMode.NOTIFICATION -> "（通知）"
     }
     val repeat = if (state.recurrence.isRecurring) {
-        "·" + RecurrenceExpander.describe(state.recurrence)
+        // 复用列表里的同一套描述逻辑，保证表单预览与列表徽章一致
+        val preview = Todo(
+            name = "",
+            startAt = start,
+            endAt = state.endAt ?: start,
+            recurrence = state.recurrence,
+            weekDays = state.weekDays,
+            monthDays = state.monthDays,
+        )
+        "·" + RecurrenceExpander.describe(preview, zone)
     } else {
         ""
     }
-    return zoned.format(formatter) + suffix + repeat
+    return zoned.format(PREVIEW_TIME_FORMATTER) + suffix + repeat
 }
+
+private val PREVIEW_TIME_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("MM-dd HH:mm")
+
+/** 周重复选中项的汇总文案。 */
+private fun weekDaysSummary(days: Set<DayOfWeek>): String =
+    if (days.isEmpty()) {
+        "未选择"
+    } else {
+        RecurrenceOptions.WEEK_ORDER
+            .filter { it in days }
+            .joinToString("、") { RecurrenceOptions.fullLabel(it) }
+    }
+
+/** 月重复选中项的汇总文案。 */
+private fun monthDaysSummary(days: Set<Int>): String =
+    if (days.isEmpty()) "未选择" else "已选：" + days.sorted().joinToString("、") + " 号"

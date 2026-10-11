@@ -2,11 +2,15 @@ package com.example.todolist.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.todolist.domain.MonthDays
 import com.example.todolist.domain.Recurrence
 import com.example.todolist.domain.RecurrenceException
 import com.example.todolist.domain.RecurrenceExceptionKind
+import com.example.todolist.domain.RecurrenceOptions
 import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
+import com.example.todolist.domain.WeekDays
+import java.time.DayOfWeek
 
 /** 待办事项持久化表。 */
 @Entity(tableName = "todos")
@@ -20,6 +24,14 @@ data class TodoEntity(
     val reminderMode: String,
     /** 周期规则：同样存枚举名。 */
     val recurrence: String,
+    /**
+     * 周重复选中的星期，存 `MONDAY,WEDNESDAY` 这样的枚举名列表。
+     *
+     * 存名字而不是序号，这样以后调整枚举顺序也不会读错。
+     */
+    val weekDays: String,
+    /** 月重复选中的号数，存 `1,15,31` 这样的列表。 */
+    val monthDays: String,
     /**
      * 例外日期，形如 `2026-10-12:SKIPPED,2026-10-19:SKIPPED`。
      * 用单个字段序列化而非建关联表：例外数量少，一次解析更简单。
@@ -42,6 +54,8 @@ fun TodoEntity.toDomain(): Todo = Todo(
     leadMinutes = leadMinutes,
     mode = enumValueOrDefault(reminderMode, ReminderMode.NOTIFICATION),
     recurrence = enumValueOrDefault(recurrence, Recurrence.NONE),
+    weekDays = parseWeekDays(weekDays),
+    monthDays = parseMonthDays(monthDays),
     recurrenceExceptions = parseExceptions(recurrenceExceptions),
     parentId = parentId,
     isDone = isDone,
@@ -58,6 +72,8 @@ fun Todo.toEntity(): TodoEntity = TodoEntity(
     leadMinutes = leadMinutes,
     reminderMode = mode.name,
     recurrence = recurrence.name,
+    weekDays = serializeWeekDays(weekDays),
+    monthDays = serializeMonthDays(monthDays),
     recurrenceExceptions = serializeExceptions(recurrenceExceptions),
     parentId = parentId,
     isDone = isDone,
@@ -65,6 +81,27 @@ fun Todo.toEntity(): TodoEntity = TodoEntity(
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
+
+internal fun serializeWeekDays(days: WeekDays): String =
+    RecurrenceOptions.WEEK_ORDER.filter { it in days }.joinToString(",") { it.name }
+
+internal fun parseWeekDays(raw: String): WeekDays {
+    if (raw.isBlank()) return emptySet()
+    return raw.split(",").mapNotNull { token ->
+        DayOfWeek.entries.firstOrNull { it.name == token.trim() }
+    }.toSet()
+}
+
+internal fun serializeMonthDays(days: MonthDays): String =
+    days.filter { it in 1..31 }.sorted().joinToString(",")
+
+internal fun parseMonthDays(raw: String): MonthDays {
+    if (raw.isBlank()) return emptySet()
+    return raw.split(",")
+        .mapNotNull { it.trim().toIntOrNull() }
+        .filter { it in 1..31 }
+        .toSet()
+}
 
 /** 解析失败时回落到默认值，绝不让一条脏数据把整个列表打崩。 */
 private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String, fallback: T): T =

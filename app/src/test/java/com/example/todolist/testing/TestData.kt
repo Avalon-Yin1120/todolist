@@ -1,10 +1,12 @@
 package com.example.todolist.testing
 
 import com.example.todolist.domain.Clock
+import com.example.todolist.domain.MonthDays
 import com.example.todolist.domain.Recurrence
 import com.example.todolist.domain.RecurrenceException
 import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
+import com.example.todolist.domain.WeekDays
 import java.time.ZoneId
 
 /** 测试数据工厂，集中时间常量避免各测试各写一遍。 */
@@ -28,6 +30,8 @@ object TestData {
         leadMinutes: Int = 0,
         mode: ReminderMode = ReminderMode.NOTIFICATION,
         recurrence: Recurrence = Recurrence.NONE,
+        weekDays: WeekDays = emptySet(),
+        monthDays: MonthDays = emptySet(),
         recurrenceExceptions: List<RecurrenceException> = emptyList(),
         parentId: Long? = null,
         isDone: Boolean = false,
@@ -40,6 +44,8 @@ object TestData {
         leadMinutes = leadMinutes,
         mode = mode,
         recurrence = recurrence,
+        weekDays = weekDays,
+        monthDays = monthDays,
         recurrenceExceptions = recurrenceExceptions,
         parentId = parentId,
         isDone = isDone,

@@ -32,6 +32,9 @@ import java.time.ZoneId
 /** 底部导航的视图。 */
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
+/** 顶层界面：主界面与设置页。 */
+enum class Screen { MAIN, SETTINGS }
+
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
 
@@ -73,10 +76,12 @@ data class TodoUiState(
     val canScheduleExact: Boolean = true,
     val notice: Notice? = null,
     val dialog: DialogRequest? = null,
-    val tab: NavTab = NavTab.TODO,
+    /** 默认进入日视图 */
+    val tab: NavTab = NavTab.DAY,
     val selectedDate: LocalDate = LocalDate.now(),
     val grouping: ListGrouping = ListGrouping.BY_TIME,
-    val settingsOpen: Boolean = false,
+    /** 当前顶层界面：主界面或设置页 */
+    val screen: Screen = Screen.MAIN,
     val settings: SettingsUiState = SettingsUiState(),
     /** 周期待办「仅修改本次」时的场次时间。 */
     val pendingOccurrenceStart: Long = 0L,
@@ -137,7 +142,7 @@ class TodoViewModel(
             tab = local.tab,
             selectedDate = local.selectedDate,
             grouping = local.grouping,
-            settingsOpen = local.settingsOpen,
+            screen = local.screen,
             settings = local.settings,
             pendingOccurrenceStart = local.pendingOccurrenceStart,
             pendingRecurringTodo = local.pendingRecurringTodo,
@@ -340,9 +345,9 @@ class TodoViewModel(
 
     // ---------------------------------------------------------------- 设置
 
-    fun openSettings() = updateLocal { it.copy(settingsOpen = true) }
+    fun openSettings() = updateLocal { it.copy(screen = Screen.SETTINGS) }
 
-    fun closeSettings() = updateLocal { it.copy(settingsOpen = false) }
+    fun closeSettings() = updateLocal { it.copy(screen = Screen.MAIN) }
 
     fun changeSetting(change: SettingsChange) {
         when (change) {
@@ -388,10 +393,11 @@ class TodoViewModel(
         val settings: SettingsUiState,
         val notice: Notice? = null,
         val dialog: DialogRequest? = null,
-        val tab: NavTab = NavTab.TODO,
+        /** 默认进入日视图 */
+        val tab: NavTab = NavTab.DAY,
         val selectedDate: LocalDate = LocalDate.now(),
         val grouping: ListGrouping = ListGrouping.BY_TIME,
-        val settingsOpen: Boolean = false,
+        val screen: Screen = Screen.MAIN,
         val pendingOccurrenceStart: Long = 0L,
         val pendingRecurringTodo: Todo? = null,
     )

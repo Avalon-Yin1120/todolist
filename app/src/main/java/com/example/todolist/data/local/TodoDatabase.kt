@@ -7,8 +7,8 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [TodoEntity::class],
-    // v2：引入提醒方式（通知/闹钟）、周期规则与例外日期、场次级已提醒标记
-    version = 2,
+    // v3：周重复精确到星期几、月重复精确到几号
+    version = 3,
     exportSchema = true,
 )
 abstract class TodoDatabase : RoomDatabase() {
@@ -28,7 +28,7 @@ abstract class TodoDatabase : RoomDatabase() {
                 TodoDatabase::class.java,
                 DB_NAME,
             )
-                // v1 -> v2 是结构性变更（新增周期与提醒方式字段）。
+                // v1 -> v2 新增周期与提醒方式；v2 -> v3 新增周几/几号。
                 // 正式发版前必须替换为真正的 Migration；当前尚未发布，直接重建库。
                 .fallbackToDestructiveMigration()
                 .build()

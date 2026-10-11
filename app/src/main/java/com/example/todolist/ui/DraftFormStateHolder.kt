@@ -3,10 +3,15 @@ package com.example.todolist.ui
 import com.example.todolist.domain.Clock
 import com.example.todolist.domain.FormError
 import com.example.todolist.domain.FormValidator
+import com.example.todolist.domain.MonthDays
 import com.example.todolist.domain.Recurrence
 import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderTime
+import com.example.todolist.domain.WeekDays
 import com.example.todolist.data.TodoDraft
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +37,10 @@ data class DraftFormState(
     val mode: ReminderMode = ReminderMode.NOTIFICATION,
     /** 周期规则。 */
     val recurrence: Recurrence = Recurrence.NONE,
+    /** 周重复选中的星期几。 */
+    val weekDays: WeekDays = emptySet(),
+    /** 月重复选中的几号。 */
+    val monthDays: MonthDays = emptySet(),
 ) {
     /** 提前量的可读描述，例如「提前 30 分钟」。 */
     val leadLabel: String
@@ -59,6 +68,8 @@ class DraftFormStateHolder(
     private val rememberedLeadMinutes: () -> Int = { FALLBACK_LEAD_MINUTES },
     /** 用户此前选择的提醒方式，作为新建待办时的默认值。 */
     private val defaultMode: () -> ReminderMode = { ReminderMode.NOTIFICATION },
+    /** 表单里按哪个时区解释日期；与界面一致。 */
+    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
 
     private val _state = MutableStateFlow(DraftFormState())
@@ -81,6 +92,8 @@ class DraftFormStateHolder(
         leadMinutes: Int? = null,
         mode: ReminderMode? = null,
         recurrence: Recurrence = Recurrence.NONE,
+        weekDays: WeekDays = emptySet(),
+        monthDays: MonthDays = emptySet(),
     ) {
         val start = startAt ?: defaultStartAtProvider(clock.now())
         val lead = leadMinutes ?: rememberedLeadMinutes().coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
@@ -93,6 +106,21 @@ class DraftFormStateHolder(
             leadInput = lead.toEditableLeadInput(),
             mode = mode ?: defaultMode(),
             recurrence = recurrence,
+            // 没指定具体日子时，用起始时间所在的星期/号数作为默认，避免出现「每周但没选星期」
+            weekDays = weekDays.ifEmpty {
+                if (recurrence == Recurrence.WEEKLY) {
+                    setOf(Instant.ofEpochMilli(start).atZone(zone).dayOfWeek)
+                } else {
+                    emptySet()
+                }
+            },
+            monthDays = monthDays.ifEmpty {
+                if (recurrence == Recurrence.MONTHLY) {
+                    setOf(Instant.ofEpochMilli(start).atZone(zone).dayOfMonth)
+                } else {
+                    emptySet()
+                }
+            },
         )
         _errors.value = emptyMap()
     }
@@ -149,8 +177,46 @@ class DraftFormStateHolder(
         _state.value = _state.value.copy(mode = value)
     }
 
+    /**
+     * 切换周期规则。
+     *
+     * 切到周重复/月重复时，如果还没选具体日子，就用起始时间所在的星期/号数兜底，
+     * 否则用户会看到「每周」却没有任何一天被选中。
+     */
     fun setRecurrence(value: Recurrence) {
-        _state.value = _state.value.copy(recurrence = value)
+        val current = _state.value
+        val start = current.startAt
+        _state.value = current.copy(
+            recurrence = value,
+            weekDays = when {
+                value != Recurrence.WEEKLY -> current.weekDays
+                current.weekDays.isNotEmpty() -> current.weekDays
+                start != null -> setOf(Instant.ofEpochMilli(start).atZone(zone).dayOfWeek)
+                else -> current.weekDays
+            },
+            monthDays = when {
+                value != Recurrence.MONTHLY -> current.monthDays
+                current.monthDays.isNotEmpty() -> current.monthDays
+                start != null -> setOf(Instant.ofEpochMilli(start).atZone(zone).dayOfMonth)
+                else -> current.monthDays
+            },
+        )
+    }
+
+    /** 勾选/取消某个星期。 */
+    fun toggleWeekDay(day: DayOfWeek) {
+        val current = _state.value.weekDays
+        _state.value = _state.value.copy(
+            weekDays = if (day in current) current - day else current + day,
+        )
+    }
+
+    /** 勾选/取消某个号数。 */
+    fun toggleMonthDay(day: Int) {
+        val current = _state.value.monthDays
+        _state.value = _state.value.copy(
+            monthDays = if (day in current) current - day else current + day,
+        )
     }
 
     /** 校验当前表单；返回空 map 表示通过。 */
@@ -178,6 +244,8 @@ class DraftFormStateHolder(
             leadMinutes = current.leadMinutes,
             mode = current.mode,
             recurrence = current.recurrence,
+            weekDays = current.weekDays,
+            monthDays = current.monthDays,
         )
     }
 

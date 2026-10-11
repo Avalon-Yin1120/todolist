@@ -27,8 +27,11 @@ import com.example.todolist.ui.TAG_CONFIRM_DELETE
 import com.example.todolist.ui.TAG_COUNTDOWN
 import com.example.todolist.ui.TAG_MODE_ALARM
 import com.example.todolist.ui.TAG_MODE_NOTIFICATION
+import com.example.todolist.ui.TAG_MONTHDAY_PREFIX
+import com.example.todolist.ui.TAG_RECURRENCE_PREFIX
+import com.example.todolist.ui.TAG_WEEKDAY_PREFIX
 import com.example.todolist.ui.TAG_SETTINGS_BUTTON
-import com.example.todolist.ui.TAG_SETTINGS_CLOSE
+import com.example.todolist.ui.TAG_SETTINGS_BACK
 import com.example.todolist.ui.TAG_SETTING_ALARM
 import com.example.todolist.ui.TAG_SWIPE_AREA
 import com.example.todolist.ui.TAG_TAB_DAY
@@ -78,19 +81,26 @@ class TodoListUiTest {
     private fun unique(prefix: String) = "$prefix-" + System.currentTimeMillis()
 
     /**
-     * 每个用例前清空待办，保证互不影响。
+     * 每个用例前把状态复位，保证互不影响。
      *
      * 用 DAO 清表而不是删除数据库文件：数据库文件与被测进程共享，
      * 删文件会让已经打开的 Room 连接指向不存在的表（SQLiteException）。
+     *
+     * 同时重置设置里的「上次提前量」——这是产品里的「智能默认」功能，
+     * 它会记住上一个用例填过的值，不复位就会让断言「初始为空」失败。
      */
     @Before
-    fun clearTodos() {
+    fun resetState() {
         val application = InstrumentationRegistry.getInstrumentation()
             .targetContext.applicationContext
-        val repository = (application as TodoApp).requireGraph().repository
+        val graph = (application as TodoApp).requireGraph()
         runBlocking {
-            repository.findAll().forEach { todo -> repository.delete(todo) }
+            graph.repository.findAll().forEach { todo -> graph.repository.delete(todo) }
         }
+        graph.settings.lastLeadMinutes = 0
+        graph.settings.useAlarmForReminders = true
+        graph.settings.confirmBeforeDelete = true
+        graph.settings.warnOnOverlap = true
         composeRule.waitForIdle()
     }
 
@@ -105,6 +115,14 @@ class TodoListUiTest {
             .targetContext.applicationContext
         val graph = (application as TodoApp).requireGraph()
         return runBlocking { graph.repository.findAll().map { it.id }.toSet() }
+    }
+
+    /** 读取某条待办的完整记录，用于断言周期规则是否被正确保存。 */
+    private fun currentTodo(id: Long): com.example.todolist.domain.Todo {
+        val application = InstrumentationRegistry.getInstrumentation()
+            .targetContext.applicationContext
+        val graph = (application as TodoApp).requireGraph()
+        return runBlocking { requireNotNull(graph.repository.findById(id)) }
     }
 
     /**
@@ -309,7 +327,6 @@ class TodoListUiTest {
         composeRule.onAllNodesWithText("未开始")[0].assertExists()
     }
 
-    @Test
     fun 删除待办会先弹确认框() {
         val id = addTodo(unique("待删除"))
 
@@ -370,7 +387,7 @@ class TodoListUiTest {
         composeRule.onNodeWithText("设置").assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_SETTING_ALARM).assertIsDisplayed()
 
-        composeRule.onNodeWithTag(TAG_SETTINGS_CLOSE).performClick()
+        composeRule.onNodeWithTag(TAG_SETTINGS_BACK).performClick()
         composeRule.waitForIdle()
     }
 }
