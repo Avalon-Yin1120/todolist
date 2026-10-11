@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">待办提醒</string>
+
+    <!-- 列表页 -->
+    <string name="list_title">待办提醒</string>
+    <string name="list_empty_title">还没有待办事项</string>
+    <string name="list_empty_hint">点击右下角 + 添加第一条待办</string>
+    <string name="action_add">新增待办</string>
+    <string name="action_edit">编辑</string>
+    <string name="action_delete">删除</string>
+    <string name="action_done">标记完成</string>
+    <string name="action_undo_done">取消完成</string>
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_grant">去授权</string>
+
+    <!-- 编辑表单 -->
+    <string name="edit_title_new">新增待办</string>
+    <string name="edit_title_existing">编辑待办</string>
+    <string name="field_name">名称</string>
+    <string name="field_name_hint">例如：小组会议</string>
+    <string name="field_start">起始时间</string>
+    <string name="field_end">终止时间</string>
+    <string name="field_lead">提前提醒</string>
+    <string name="field_lead_unit">分钟</string>
+    <string name="field_use_exact">使用精确闹钟提醒</string>
+    <string name="field_use_exact_hint">关闭时使用普通通知，可能被系统延后几分钟</string>
+    <string name="quick_lead_0">准点</string>
+    <string name="quick_lead_5">5 分钟</string>
+    <string name="quick_lead_30">30 分钟</string>
+    <string name="quick_lead_60">1 小时</string>
+    <string name="quick_lead_1440">1 天</string>
+
+    <!-- 校验错误 -->
+    <string name="error_name_empty">请填写名称</string>
+    <string name="error_name_too_long">名称不能超过 80 个字</string>
+    <string name="error_end_before_start">终止时间必须晚于起始时间</string>
+    <string name="error_lead_range">提前量需在 0 到 10080 分钟（7 天）之间</string>
+
+    <!-- 状态 -->
+    <string name="status_upcoming">未开始</string>
+    <string name="status_running">进行中</string>
+    <string name="status_ended">已结束</string>
+    <string name="status_done">已完成</string>
+    <string name="status_notified">已提醒</string>
+
+    <!-- 权限提示 -->
+    <string name="banner_exact_missing">精确闹钟权限未开启，精确提醒会退化为普通通知（可能延后）</string>
+    <string name="banner_notification_missing">通知权限未开启，无法弹出提醒</string>
+
+    <!-- 通知 -->
+    <string name="notif_channel_name">待办提醒</string>
+    <string name="notif_channel_desc">待办事项到点提醒</string>
+    <string name="notif_content">时间：%1$s</string>
+</resources>

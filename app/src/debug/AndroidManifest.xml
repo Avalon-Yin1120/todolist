@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  debug 专用清单：把精确闹钟的接收器导出，便于用 adb 直接触发以验证通知渲染。
+
+    adb shell am broadcast
+        -a com.example.todolist.action.FIRE_REMINDER
+        -n com.example.todolist/com.example.todolist.reminder.ReminderAlarmReceiver
+        (整型参数 extra_todo_id 用 -ei 传入)
+
+  生产（release）构建不包含这份覆盖，接收器保持 exported="false"，
+  外部应用无法伪造提醒广播。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <receiver
+            android:name=".reminder.ReminderAlarmReceiver"
+            android:exported="true"
+            tools:replace="android:exported" />
+    </application>
+
+</manifest>

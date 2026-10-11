@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 仅作为 Activity 的宿主主题；界面样式全部由 Compose Material3 负责。 -->
+    <style name="Theme.Todolist" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/brand_primary</item>
+        <item name="android:navigationBarColor">@color/brand_surface</item>
+    </style>
+</resources>
