@@ -70,9 +70,87 @@ class DraftFormStateHolderTest {
                 startAt = now + 10 * TestData.MINUTE,
                 endAt = now + 40 * TestData.MINUTE,
                 leadMinutes = 15,
+                leadInput = "15",
                 useExactAlarm = true,
             )
         )
+    }
+
+    // ---------------------------------------------------------- 提前量输入体验
+
+    @Test
+    fun `提前量为零时输入框是空的而不是填着删不掉的0`() {
+        form.open(leadMinutes = 0)
+
+        assertThat(form.state.value.leadInput).isEmpty()
+        assertThat(form.state.value.leadMinutes).isEqualTo(0)
+    }
+
+    @Test
+    fun `可以把提前量删空且语义上等于准点`() {
+        form.open()
+        form.setName("会议")
+
+        form.setLeadMinutes(30)
+        assertThat(form.state.value.leadInput).isEqualTo("30")
+
+        // 用户用退格逐位删掉
+        form.setLeadInput("3")
+        form.setLeadInput("")
+
+        assertThat(form.state.value.leadInput).isEmpty()
+        assertThat(form.state.value.leadMinutes).isEqualTo(0)
+        assertThat(form.state.value.leadInputInvalid).isFalse()
+        // 名称与时间合法，因此整体校验应通过
+        assertThat(form.validate()).isEmpty()
+    }
+
+    @Test
+    fun `输入超范围数字会立刻标记非法而不是静默变成0`() {
+        form.open()
+        form.setName("会议")
+        form.setLeadInput("10081")
+
+        assertThat(form.state.value.leadInputInvalid).isTrue()
+        assertThat(form.validate()[FormValidator.FIELD_LEAD])
+            .isEqualTo(FormError.LEAD_OUT_OF_RANGE)
+    }
+
+    @Test
+    fun `输入中不会因为限制字符而丢失已输入内容`() {
+        form.open()
+
+        // 带字母与符号的输入被过滤掉，数字保留
+        form.setLeadInput("1a2-3")
+
+        assertThat(form.state.value.leadInput).isEqualTo("123")
+        assertThat(form.state.value.leadMinutes).isEqualTo(123)
+    }
+
+    @Test
+    fun `新建时使用记住的提前量作为默认值`() {
+        val holder = DraftFormStateHolder(
+            clock = clock,
+            rememberedLeadMinutes = { 45 },
+        )
+
+        holder.open()
+
+        assertThat(holder.state.value.leadMinutes).isEqualTo(45)
+        assertThat(holder.state.value.leadInput).isEqualTo("45")
+    }
+
+    @Test
+    fun `没有历史记录时默认提前量为准点`() {
+        val holder = DraftFormStateHolder(
+            clock = clock,
+            rememberedLeadMinutes = { DraftFormStateHolder.FALLBACK_LEAD_MINUTES },
+        )
+
+        holder.open()
+
+        assertThat(holder.state.value.leadMinutes).isEqualTo(0)
+        assertThat(holder.state.value.leadInput).isEmpty()
     }
 
     @Test

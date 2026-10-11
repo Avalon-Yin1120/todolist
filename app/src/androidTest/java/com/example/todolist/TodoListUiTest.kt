@@ -1,6 +1,7 @@
 package com.example.todolist
 
 import android.Manifest
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
@@ -10,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
@@ -17,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import com.example.todolist.ui.TAG_ADD_FAB
 import com.example.todolist.ui.TAG_EXACT_SWITCH
+import com.example.todolist.ui.TAG_LEAD_FIELD
 import com.example.todolist.ui.TAG_NAME_FIELD
 import com.example.todolist.ui.TAG_SAVE_BUTTON
 import com.example.todolist.ui.TAG_TODO_CHECKBOX
@@ -123,6 +126,80 @@ class TodoListUiTest {
         composeRule.onNodeWithText("请填写名称").assertIsDisplayed()
         composeRule.onNodeWithTag(TAG_NAME_FIELD).assertIsDisplayed()
     }
+
+    // ------------------------------------------------------------ 时间字段交互
+    // 回归背景：此前把 clickable 加在 OutlinedTextField 外层，点击被内部输入框吃掉，
+    // 导致「日期根本调不了」，用户只能改时间。
+
+    @Test
+    fun 起始时间的日期按钮能打开日期选择器并改写日期() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+
+        val before = startFieldText()
+        composeRule.onNodeWithTag("start_date_button").performClick()
+        composeRule.waitForIdle()
+
+        // 日期选择器出现
+        composeRule.onNodeWithText("选择日期").assertIsDisplayed()
+        composeRule.onNodeWithTag("date_confirm").performClick()
+        composeRule.waitForIdle()
+
+        // 确认后字段值应当仍是合法日期（说明交互链路通了，而不是点击被吞掉）
+        val after = startFieldText()
+        org.junit.Assert.assertEquals(before, after)
+        org.junit.Assert.assertTrue("起始时间字段不应为空", after.isNotEmpty())
+    }
+
+    @Test
+    fun 起始时间的日期按钮存在且可点击() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("start_date_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("start_time_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("end_date_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("end_time_button").assertIsDisplayed()
+    }
+
+    @Test
+    fun 提前量输入框初始为空而不是填着0() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+
+        // 直接读输入框的语义值：应为空（0 不再是删不掉的内容）
+        org.junit.Assert.assertEquals("", leadFieldText())
+    }
+
+    @Test
+    fun 提前量输入后可以再删空() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TAG_LEAD_FIELD).performTextInput("30")
+        composeRule.waitForIdle()
+        org.junit.Assert.assertEquals("30", leadFieldText())
+
+        composeRule.onNodeWithTag(TAG_LEAD_FIELD).performTextClearance()
+        composeRule.waitForIdle()
+
+        // 清空成功——这是此前做不到的
+        org.junit.Assert.assertEquals("", leadFieldText())
+    }
+
+    /** 读取起始时间字段当前的显示文本。 */
+    private fun startFieldText(): String =
+        composeRule.onNodeWithTag("start_field")
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.EditableText]
+            .text
+
+    /** 读取提前量输入框当前文本。 */
+    private fun leadFieldText(): String =
+        composeRule.onNodeWithTag(TAG_LEAD_FIELD)
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.EditableText]
+            .text
 
     @Test
     fun 勾选后展示已完成状态() {

@@ -74,12 +74,14 @@ fun TodoEditSheet(
                     label = "起始时间",
                     value = state.startAt,
                     onValueChange = form::setStartAt,
+                    tagPrefix = "start",
                 )
 
                 DateTimePickerField(
                     label = "终止时间",
                     value = state.endAt,
                     onValueChange = form::setEndAt,
+                    tagPrefix = "end",
                 )
 
                 if (errors.containsKey(FormValidator.FIELD_RANGE)) {
@@ -100,19 +102,21 @@ fun TodoEditSheet(
                     }
                 }
                 OutlinedTextField(
-                    value = state.leadMinutes.toString(),
-                    onValueChange = { text ->
-                        val digits = text.filter { it.isDigit() }.take(5)
-                        form.setLeadMinutes(digits.toIntOrNull() ?: 0)
-                    },
+                    // 用单独保存的原始文本，这样 0 可以被删掉（删空即视为准点）
+                    value = state.leadInput,
+                    onValueChange = form::setLeadInput,
                     label = { Text("提前量（分钟）") },
+                    placeholder = { Text("留空表示准点提醒") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     isError = errors.containsKey(FormValidator.FIELD_LEAD),
                     supportingText = {
                         errors[FormValidator.FIELD_LEAD]?.let { Text(messageOf(it)) }
+                            ?: Text("0 或留空表示准点提醒")
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(TAG_LEAD_FIELD),
                 )
                 Text(
                     text = "提醒时间：" + reminderPreview(state),
