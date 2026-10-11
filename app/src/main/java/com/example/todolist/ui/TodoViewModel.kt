@@ -88,6 +88,17 @@ data class TodoUiState(
     /** 默认进入日视图 */
     val tab: NavTab = NavTab.DAY,
     val selectedDate: LocalDate = LocalDate.now(),
+    /**
+     * 用户主动跳转的序号。
+     *
+     * 日历 pager 只在这个值变化时才滚动（外加 tab 变化）。
+     * 不能直接以 [selectedDate] 驱动 pager：pager 自己在翻页后会把「当前显示的那一期」
+     * 写回 selectedDate，如果这个回写又反过来驱动 pager，两个方向就会互相打架——
+     * 打开应用时 pager 先停在锚点页（2000-01-01），回写把 selectedDate 改成 2000-01-01，
+     * 紧接着「滚到 selectedDate」的效应就把刚发起的「滚到今天」动画取消了，
+     * 于是界面永远停在 2000 年（这正是用户报的「一打开就不对、怎么滑都在远古」）。
+     */
+    val jumpRequest: Long = 0,
     val grouping: ListGrouping = ListGrouping.BY_TIME,
     /** 当前顶层界面：主界面、设置页或表单页 */
     val screen: Screen = Screen.MAIN,
@@ -144,6 +155,10 @@ class TodoViewModel(
             canScheduleExact = canScheduleExactAlarms(),
             batteryOptimizationIgnored = batteryOptimization?.isIgnoringBatteryOptimizations() ?: true,
             settings = readSettings(),
+            // 「今天」必须取自注入的时钟/时区，而不是系统时钟：
+            // 否则测试里 FakeClock 的日期和界面认的日期会不一致，
+            // 日历首帧就会落到错误的页上。
+            selectedDate = LocalDate.ofInstant(java.time.Instant.ofEpochMilli(clock.now()), zone),
         )
     )
 
@@ -161,6 +176,7 @@ class TodoViewModel(
             dialog = local.dialog,
             tab = local.tab,
             selectedDate = local.selectedDate,
+            jumpRequest = local.jumpRequest,
             grouping = local.grouping,
             screen = if (edit.isOpen) Screen.FORM else local.screen,
             oneOffEdit = edit.oneOffSourceId != 0L,
@@ -195,16 +211,41 @@ class TodoViewModel(
 
     fun selectTab(tab: NavTab) = updateLocal { it.copy(tab = tab) }
 
-    /** 点某一天：跳到日视图。 */
-    fun selectDate(date: LocalDate) =
-        updateLocal { it.copy(selectedDate = date, tab = NavTab.DAY) }
+    /** 点某一天：跳到日视图。同时发一次跳转请求，让日历滚到那一天。 */
+    fun selectDate(date: LocalDate) = updateLocal {
+        it.copy(selectedDate = date, tab = NavTab.DAY, jumpRequest = it.jumpRequest + 1)
+    }
 
     /**
      * 只更新「当前看的日期」，不切换视图。
      *
      * 日历视图翻页时用这个：翻到下一周不该把用户从周视图踢到日视图。
+     *
+     * 传入的 [date] 有两种来源，处理方式不同：
+     * * pager 上报的「这一期的代表日」（周=周一、月=1 号）——粒度比用户实际在看的日期粗，
+     *   如果当前 selectedDate 就在这一期里，就保留它（连同「几号」）；
+     * * 上层显式给的某一天（例如「回到今天」把日期落回今天）——照收，
+     *   否则月视图里存着 1 号时会把「今天」挡掉，切回日视图就永远停在 1 号。
      */
-    fun selectDateSoft(date: LocalDate) = updateLocal { it.copy(selectedDate = date) }
+    fun selectDateSoft(date: LocalDate) = updateLocal { local ->
+        val keepFinerDate = isPeriodAnchor(local.tab, date) &&
+            samePeriodAs(local.tab, local.selectedDate, date)
+        if (keepFinerDate) local else local.copy(selectedDate = date)
+    }
+
+    /** [date] 是否正好落在本粒度的期首（周=周一、月=1 号；日粒度下每天都是期首）。 */
+    private fun isPeriodAnchor(tab: NavTab, date: LocalDate): Boolean = when (tab) {
+        NavTab.WEEK -> CalendarLayout.weekStart(date) == date
+        NavTab.MONTH -> date.dayOfMonth == 1
+        else -> true
+    }
+
+    /** 两个日期是否属于同一期（同一周 / 同一月 / 同一天）。 */
+    private fun samePeriodAs(tab: NavTab, a: LocalDate, b: LocalDate): Boolean = when (tab) {
+        NavTab.WEEK -> CalendarLayout.weekStart(a) == CalendarLayout.weekStart(b)
+        NavTab.MONTH -> java.time.YearMonth.from(a) == java.time.YearMonth.from(b)
+        else -> a == b
+    }
 
     /** 左右滑动切换：日视图 ±1 天，周视图 ±7 天。 */
     fun shiftDate(days: Long) = updateLocal { it.copy(selectedDate = it.selectedDate.plusDays(days)) }
@@ -461,6 +502,8 @@ class TodoViewModel(
         /** 默认进入日视图 */
         val tab: NavTab = NavTab.DAY,
         val selectedDate: LocalDate = LocalDate.now(),
+        /** 见 [TodoUiState.jumpRequest] */
+        val jumpRequest: Long = 0,
         val grouping: ListGrouping = ListGrouping.BY_TIME,
         val screen: Screen = Screen.MAIN,
         val pendingOccurrenceStart: Long = 0L,

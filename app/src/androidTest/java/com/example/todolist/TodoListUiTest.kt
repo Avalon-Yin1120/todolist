@@ -21,6 +21,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import com.example.todolist.ui.DateFormats
 import com.example.todolist.ui.TAG_ADD_FAB
 import com.example.todolist.ui.TAG_CANCEL_DELETE
 import com.example.todolist.ui.TAG_CONFIRM_DELETE
@@ -298,10 +299,12 @@ class TodoListUiTest {
         composeRule.onNodeWithTag(TAG_PERIOD_NEXT).assertExists()
         composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).assertExists()
 
-        // 翻页按钮确实改变了「当前是哪一周」
-        val before = periodLabelText()
+        // 翻页按钮确实改变了「当前是哪一周」。
+        // 断言的是「今天 +1 周」这个确定的值，而不是「和之前不一样」：
+        // 后者在动画中间态下可能瞬间成立，失败时也看不出实际是什么。
+        val nextWeek = weekLabelOf(LocalDate.now().plusWeeks(1))
         composeRule.onNodeWithTag(TAG_PERIOD_NEXT).performClick()
-        composeRule.waitUntil(timeoutMillis = 8_000) { periodLabelText() != before }
+        composeRule.waitUntil(timeoutMillis = 8_000) { periodLabelText() == nextWeek }
 
         // 「回到本周」应回到今天所在的那一周。
         //
@@ -556,5 +559,60 @@ class TodoListUiTest {
 
         composeRule.onNodeWithTag(TAG_SETTINGS_BACK).performClick()
         composeRule.waitForIdle()
+    }
+
+    // ------------------------------------------------------------ 打开与翻页
+    //
+    // 回归：应用一打开，日视图必须停在「今天」。
+    // 曾经 pager 停在锚点页 2000-01-01，而且范围只到 2016 年，
+    // 于是用户怎么滑都在远古，永远回不到今天。
+
+    @Test
+    fun 打开日视图就停在今天() {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(LocalDate.now())
+        }
+    }
+
+    @Test
+    fun 翻页按钮依次前进且来回对称() {
+        val today = LocalDate.now()
+        composeRule.onNodeWithTag(TAG_TAB_DAY).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(today)
+        }
+
+        // 前进一天
+        composeRule.onNodeWithTag(TAG_PERIOD_NEXT).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(today.plusDays(1))
+        }
+
+        // 后退两天，应当落在昨天（右滑再左滑要对称，不能回不去）
+        composeRule.onNodeWithTag(TAG_PERIOD_PREV).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(today)
+        }
+        composeRule.onNodeWithTag(TAG_PERIOD_PREV).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(today.minusDays(1))
+        }
+
+        // 回到今天
+        composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(today)
+        }
+    }
+
+    @Test
+    fun 从月视图切回日视图仍停在今天() {
+        composeRule.onNodeWithTag(TAG_TAB_MONTH).performClick()
+        composeRule.waitForIdle()
+        // 月视图报上来的是当月 1 号，但切回日视图不该掉到 1 号
+        composeRule.onNodeWithTag(TAG_TAB_DAY).performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            periodLabelText() == DateFormats.fullDate(LocalDate.now())
+        }
     }
 }

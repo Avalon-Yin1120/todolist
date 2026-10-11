@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,13 +22,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.derivedStateOf
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.Icons
@@ -64,6 +61,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.util.Log
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.todolist.BuildConfig
 import com.example.todolist.domain.ListOrdering
@@ -325,8 +323,10 @@ fun TodoListScreen(
             } else {
                 CalendarPager(
                     tab = uiState.tab,
-                    // selectedDate 只作为锚点（进入视图那一刻的日期）
+                    // selectedDate 只作为跳转目标（进入视图那一刻的日期）
                     selectedDate = uiState.selectedDate,
+                    // 只有用户主动跳转才驱动 pager，见 CalendarPager 的说明
+                    jumpRequest = uiState.jumpRequest,
                     today = CalendarLayout.toLocalDate(now, zone),
                     // 显示的那一期变了：只更新上层日期用于倒计时与切回视图，不反向驱动 pager
                     onDisplay = { date ->
@@ -603,7 +603,16 @@ private fun TodoOverview(
 @Composable
 private fun CalendarPager(
     tab: NavTab,
+    /** 上层要求跳转到的日期（点某天 / 切视图那一刻的日期） */
     selectedDate: LocalDate,
+    /**
+     * 用户主动跳转的序号，见 [TodoUiState.jumpRequest]。
+     *
+     * 只有它变化（或 [tab] 变化）才把 pager 滚过去。**不能**直接拿 [selectedDate] 当键：
+     * pager 翻页后会把当前显示的那一期通过 [onDisplay] 写回上层，若上层再拿它驱动 pager，
+     * 就会和「滚到今天」的动画互相打断，最终停在锚点页 2000-01-01。
+     */
+    jumpRequest: Long,
     /** 今天，用于「回到今天/本周/本月」 */
     today: LocalDate,
     /** 当前显示的这一期变了（滑动或翻页后）通知上层，用于更新倒计时等 */
@@ -613,42 +622,82 @@ private fun CalendarPager(
     content: @Composable (LocalDate) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(initialPage = MIDDLE, pageCount = { PAGE_COUNT })
+    // 初始页就是「当前日期」在本粒度下的那一页，首帧即正确（不会先闪一下锚点页再滚）
+    val pagerState = rememberPagerState(
+        initialPage = pageOfDate(tab, selectedDate),
+        pageCount = { PAGE_COUNT },
+    )
 
     // 当前显示的这一期，直接由 pager 的当前位置推导。
     // 不在函数里开任何可变的「锚点」状态，避免映射随会话漂移。
     val shownDate = dateOfPage(tab, pagerState.currentPage)
 
+    // 下面的效应只以 (tab, jumpRequest) 为键，会长期运行。
+    // LaunchedEffect 不会看到重建之后的新 lambda，所以回调必须用 rememberUpdatedState 取最新值，
+    // 否则 collect 里用的还是首次组合时那个 onDisplay：
+    // 它内部闭包着 uiState.selectedDate，会用**过期的日期**做「是否变化」的判断，
+    // 结果是上报被静默丢弃、顶部标题停在上一期（实测：连点下一个再上一个，标题回到不去）。
+    val currentOnDisplay by rememberUpdatedState(onDisplay)
+
+    // 页码预算自检：只在调试构建里跑。
+    // 之前 MIDDLE = 6000 时，日视图只够覆盖到 2016 年，「回到今天」会被夹到末页，
+    // 而这种错在编译期完全看不出来。把断言放在这里，以后谁再改常量都会立刻炸出来。
+    if (BuildConfig.DEBUG) {
+        LaunchedEffect(tab, today, selectedDate) {
+            checkPagingBudget(
+                tab,
+                today,
+                selectedDate,
+                today.minusYears(50),
+                today.plusYears(50),
+            )
+        }
+    }
+
     /**
-     * 唯一的滚动入口。
+     * 带动画地翻到某一页：左右按钮与「回到今天/本周/本月」用。
      *
-     * 之前「按钮」和「上层 selectedDate 变化的效应」各自调 animateScrollToPage，
-     * 两个动画互相打断，表现就是翻一下卡住、或者像到了尽头。
-     * 现在全部走这里，并且：
-     * * 已经在目标页就直接返回，不再发起动画（避免自我打断）；
-     * * 用 Mutex 串行化，保证同一时刻只有一个滚动动画在跑。
+     * * 以 [PagerState.targetPage]（**动画目标页**）为准判断是否已经在道上。
+     *   用 [PagerState.currentPage]（离吸附点最近的那一页）判断会吞点击：
+     *   动画还没结束时 currentPage 仍是旧页，用户连点两次「下一个」会算出同一个目标，
+     *   第二次点击就被当成"已经在目标页"丢弃。以目标页为基准则连点会依次累加。
+     *   （Compose Foundation 1.7.6 里这个属性叫 targetPage，不是 currentTargetPage；
+     *   程序化滚动一开始就写入它，滚动结束后复位为 currentPage。）
+     * * 不需要 Mutex：animateScrollToPage 本身会取消上一次动画，后一次点击天然覆盖前一次。
      */
-    val scrollMutex = remember { Mutex() }
     fun scrollToPage(target: Int) {
+        // 越界只可能是预算算错了（见 MIDDLE / PAGE_COUNT 的说明），夹一下保证不崩
         val clamped = target.coerceIn(0, PAGE_COUNT - 1)
+        if (clamped == pagerState.targetPage) return
         scope.launch {
-            scrollMutex.withLock {
-                if (clamped != pagerState.currentPage) {
-                    runCatching { pagerState.animateScrollToPage(clamped) }
-                }
+            try {
+                pagerState.animateScrollToPage(clamped)
+            } catch (e: CancellationException) {
+                throw e // 被新的翻页动画取消是正常路径，不能吞掉
+            } catch (e: Throwable) {
+                Log.w("TodoListScreen", "翻页动画失败：page=$clamped", e)
             }
         }
     }
 
-    // 页变了就通知上层（更新倒计时、以及切回视图时用哪个日期）
-    LaunchedEffect(tab, pagerState.currentPage) {
-        onDisplay(dateOfPage(tab, pagerState.currentPage))
-    }
-
-    // 上层要求看某一天（点某天跳转、从别的视图切过来）：滚到对应页。
-    // 已经在目标页时 scrollToPage 会直接返回，所以不会和上面的通知形成回环。
-    LaunchedEffect(tab, selectedDate) {
-        scrollToPage(pageOfDate(tab, selectedDate))
+    /**
+     * 「切视图 / 上层要求跳转」与「上报当前显示的那一期」必须由同一个效应按固定顺序完成。
+     *
+     * 页码是「第几期」，含义随粒度变化：同一个页码在日视图是某一天、在周视图是某一周。
+     * 所以切视图时**必须先把页码对齐到新粒度**，再开始上报；一旦拆成两个效应，
+     * 切视图后的第一帧就会拿旧页码按新粒度换算（例如日视图的第 41396 页按周算是公元 2400 年），
+     * 这个垃圾日期会被当成「当前日期」写回上层、污染 selectedDate
+     * （实测：切到月视图再切回日视图会停在 1 号；更早还表现为打开就停在 2000-01-01）。
+     *
+     * 这里用瞬时跳转 [PagerState.scrollToPage] 而不是动画：视图切换本来就不该有滑动动画，
+     * 也避免与用户正在进行的翻页动画互相打断（那曾导致「连点下一个被吞」）。
+     */
+    LaunchedEffect(tab, jumpRequest) {
+        // 1) 先对齐到本视图下「上层给的那个日期」所在的那一期
+        pagerState.scrollToPage(pageOfDate(tab, selectedDate))
+        // 2) 之后页码每次变化都上报（滑动、翻页按钮、回到今天都经过这里）
+        snapshotFlow { pagerState.currentPage }
+            .collect { page -> currentOnDisplay(dateOfPage(tab, page)) }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -668,10 +717,27 @@ private fun CalendarPager(
             },
             // 用页码加减，不用「当前日期 ± 1 期」再反算页码：
             // 后者多一次换算，onClick 的 lambda 还会缓存组合时的日期。
-            onPrevious = { scrollToPage(pagerState.currentPage - 1) },
-            onNext = { scrollToPage(pagerState.currentPage + 1) },
-            // 「回到今天」就是滚到今天所在页，同样走唯一入口
-            onBackToToday = { scrollToPage(pageOfDate(tab, today)) },
+            //
+            // 基准必须是 targetPage（动画的目标页）而不是 currentPage：
+            // currentPage 是"离吸附点最近的一页"，动画途中它还没变，
+            // 连点两次「下一个」会算出同一个目标，第二次点击被当成重复而丢弃。
+            onPrevious = { scrollToPage(pagerState.targetPage - 1) },
+            onNext = { scrollToPage(pagerState.targetPage + 1) },
+            // 「回到今天/本周/本月」= 滚到今天所在那一页，**并且**把上层的「当前日期」落回今天。
+            // 只滚页的话，上层日期会停在「翻到的那一期的代表日」（月视图就是当月 1 号），
+            // 再切回日视图就会落到 1 号而不是今天（实测：月视图→11 月→回到本月→日视图 = 10 月 1 日）。
+            onBackToToday = {
+                scope.launch {
+                    try {
+                        pagerState.animateScrollToPage(pageOfDate(tab, today))
+                    } catch (e: CancellationException) {
+                        throw e // 用户中途接管（滑动/再翻页）就不强行重置了
+                    } catch (e: Throwable) {
+                        Log.w("TodoListScreen", "回到今天失败", e)
+                    }
+                    currentOnDisplay(today)
+                }
+            },
         )
         HorizontalPager(
             state = pagerState,
@@ -742,6 +808,25 @@ internal fun pageOfDate(tab: NavTab, date: LocalDate): Int {
         // 周用周一基准，月用 1 号基准，日直接按天数差
         NavTab.WEEK -> MIDDLE + java.time.temporal.ChronoUnit.WEEKS.between(WEEK_EPOCH, aligned).toInt()
         else -> MIDDLE + chronoUnitFor(tab).between(PAGE_EPOCH, aligned).toInt()
+    }
+}
+
+/**
+ * 边界自检：这些日期都必须落在合法页号 `0 until PAGE_COUNT` 内。
+ *
+ * 越界意味着翻页会被 [CalendarPager] 里的 `coerceIn` 夹断——用户看到的正是
+ * 「滑到头了、回不到今天」。这类错在编译期没有任何提示，只能靠断言兜住：
+ * 调试构建里由 [CalendarPager] 调用，单元测试里直接调用（见 CalendarPagingTest）。
+ *
+ * @throws IllegalStateException 任一日期越界时抛出，消息里带上越界页码和修法。
+ */
+internal fun checkPagingBudget(tab: NavTab, vararg dates: LocalDate) {
+    dates.forEach { date ->
+        val page = pageOfDate(tab, date)
+        check(page in 0 until PAGE_COUNT) {
+            "$tab 视图的翻页预算不够：$date 在第 $page 页，合法范围 0..${PAGE_COUNT - 1}；" +
+                "请调大 MIDDLE / PAGE_COUNT（预算按日视图的天数计算）"
+        }
     }
 }
 
@@ -860,9 +945,30 @@ private fun PermissionBanner(
     }
 }
 
-/** 分页总数与锚点页：给足 ±100 年，让用户不可能滑到边界。 */
-private const val MIDDLE = 6000
-private const val PAGE_COUNT = 12001
+// ---------------------------------------------------------------------------
+// 分页预算
+//
+// 预算必须**按最细的粒度（日视图）**来定，因为三种视图共用同一套页号空间：
+//
+//   * 日视图：1 页 = 1 天，[MIDDLE] 前后各 [MIDDLE] 天；
+//   * 周视图：1 页 = 1 周，覆盖范围是日视图的 7 倍；
+//   * 月视图：1 页 = 1 月，覆盖范围约是日视图的 30 倍。
+//
+// 之前 MIDDLE = 6000，锚点是 2000-01-01，于是日视图只覆盖到 1983-08 ~ 2016-06，
+// 「回到今天」（2026 年）会算出 15000 多页、被 coerceIn 夹到末页 12000，
+// 表现就是日视图一打开往回滑几下就「到头了」，怎样都回不到今天。
+// 周/月视图当时碰巧还够用，但边界迟早也会撞上，所以三个视图一起修。
+//
+// 现在按天给 ±40000 天（≈ ±109 年）：日视图 1983 年之前 / 2135 年之后才到头，
+// 周/月视图的实际覆盖范围更是各自外扩到 ±769 年 / ±3333 年。
+// HorizontalPager 是懒加载的，页数多不影响内存和首帧。
+// ---------------------------------------------------------------------------
+
+/** 锚点页：[PAGE_EPOCH] / [WEEK_EPOCH] 对应的页号。 */
+internal const val MIDDLE = 40_000
+
+/** 页总数，必须是奇数，保证 [MIDDLE] 两侧对称。 */
+internal const val PAGE_COUNT = 80_001
 
 // 测试标签：仪器化测试依赖这些常量定位控件，改名时请同步更新 androidTest。
 const val TAG_ADD_FAB = "todo_add_fab"

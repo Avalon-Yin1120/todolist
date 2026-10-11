@@ -13,11 +13,15 @@ import org.junit.Test
  * 1. 互逆：pageOfDate(dateOfPage(page)) == page，对任意页都成立；
  * 2. 同页等价：同一周/同一月里的任意一天都映射到同一页；
  * 3. 单调：页号 +1 恰好前进一期，不会多跳或少跳；
- * 4. 锚点无关：换算只依赖绝对基准，不受任何会话状态影响。
+ * 4. 锚点无关：换算只依赖绝对基准，不受任何会话状态影响；
+ * 5. 预算够用：日常会用到的日期都必须落在 0 until PAGE_COUNT（见下方「页码预算」）。
+ *
+ * 第 5 条是补上的：曾经 MIDDLE = 6000（锚点 2000-01-01），日视图 1 页 1 天，
+ * 只覆盖到 2016 年，于是「回到今天」被 coerceIn 夹到末页——用户滑两下就"到头了"。
  */
 class CalendarPagingTest {
 
-    private val middle = 6000
+    private val middle = MIDDLE
 
     // ------------------------------------------------------------ 互逆
 
@@ -137,5 +141,76 @@ class CalendarPagingTest {
         val mp = pageOfDate(NavTab.MONTH, jan)
         assertThat(dateOfPage(NavTab.MONTH, mp)).isEqualTo(LocalDate.of(2026, 1, 1))
         assertThat(dateOfPage(NavTab.MONTH, mp - 1)).isEqualTo(LocalDate.of(2025, 12, 1))
+    }
+
+    // ------------------------------------------------------------ 页码预算
+    //
+    // 这一组对应真实 bug：日视图曾经只覆盖到 2016 年，
+    // 「回到今天」算出的页号被夹到末页，表现是滑几下就到头、回不到今天。
+
+    @Test
+    fun `日视图的预算必须覆盖今天前后的长期跨度`() {
+        val today = LocalDate.of(2026, 10, 11)
+        // 断言：这些日期都在合法页号内（越界会抛，消息里带页码）
+        checkPagingBudget(
+            NavTab.DAY,
+            today,
+            today.minusYears(50),
+            today.plusYears(50),
+            LocalDate.of(1983, 8, 1), // 旧预算的下边界附近
+            LocalDate.of(2016, 6, 1), // 旧预算的上边界附近
+        )
+    }
+
+    @Test
+    fun `周月视图的预算必须覆盖今天前后的长期跨度`() {
+        val today = LocalDate.of(2026, 10, 11)
+        for (tab in listOf(NavTab.WEEK, NavTab.MONTH)) {
+            checkPagingBudget(tab, today, today.minusYears(50), today.plusYears(50))
+        }
+    }
+
+    @Test
+    fun `回到今天算出的是今天那一页而不是被夹到边界`() {
+        val today = LocalDate.of(2026, 10, 11)
+        for (tab in listOf(NavTab.DAY, NavTab.WEEK, NavTab.MONTH)) {
+            val page = pageOfDate(tab, today)
+            // 旧实现下这里会等于 PAGE_COUNT - 1（末页），显示的日期远离今天
+            assertThat(page).isGreaterThan(0)
+            assertThat(page).isLessThan(PAGE_COUNT - 1)
+            // 今天这一页round-trip 回来必须还是今天所属的那一期
+            assertThat(dateOfPage(tab, page))
+                .isEqualTo(
+                    when (tab) {
+                        NavTab.WEEK -> CalendarLayout.weekStart(today)
+                        NavTab.MONTH -> today.withDayOfMonth(1)
+                        else -> today
+                    },
+                )
+        }
+    }
+
+    @Test
+    fun `预算不会因为年份增长而失效`() {
+        // 手机上日期只会往前走：把 2050、2100 年的「今天」也钉一遍，
+        // 免得以后某天用户发现「回到今天」又在边界上。
+        for (tab in listOf(NavTab.DAY, NavTab.WEEK, NavTab.MONTH)) {
+            checkPagingBudget(tab, LocalDate.of(2050, 1, 1), LocalDate.of(2100, 1, 1))
+        }
+    }
+
+    @Test
+    fun `锚点页与总页数保持对称`() {
+        // MIDDLE 两侧页数必须相等，否则「滑到头」会在某一侧提前出现
+        assertThat(PAGE_COUNT % 2).isEqualTo(1)
+        assertThat(MIDDLE).isEqualTo(PAGE_COUNT / 2)
+    }
+
+    @Test
+    fun `越界时断言会抛出并指出页码`() {
+        val error = runCatching { checkPagingBudget(NavTab.DAY, LocalDate.of(2900, 1, 1)) }
+        assertThat(error.isFailure).isTrue()
+        assertThat(error.exceptionOrNull()).isInstanceOf(IllegalStateException::class.java)
+        assertThat(error.exceptionOrNull()!!.message).contains("翻页预算不够")
     }
 }

@@ -65,7 +65,7 @@ app/src/main/java/com/example/todolist/
 │  ├─ FormValidator.kt         # 表单字段级校验（返回枚举）
 │  └─ Clock.kt
 ├─ data/
-│  ├─ local/                   # Room：Entity / Dao / Database（v2，含迁移说明）
+│  ├─ local/                   # Room：Entity / Dao / Database（当前 v5）
 │  ├─ TodoRepository.kt        # 只做持久化与查询
 │  ├─ TodoDraft.kt             # 表单 → 实体的合并规则
 │  └─ SettingsStore.kt         # 设置项（接口 + 生产/内存两个实现）
@@ -146,14 +146,16 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 | `reminder/ReminderFiringServiceTest` | 触发后记下场次、**同一场次不重复提醒**、已完成不提醒、周期触发后顺延下一场 |
 | `data/TodoRepositoryTest` | 真实 Room 内存库：增删改查、排序、标记场次、**重叠查询（含紧邻不算重叠、已完成不计入）**、周期与例外日期往返 |
 | `ui/DraftFormStateHolderTest` | 默认时间取整点、编辑回填、四类校验错误、**提前量为 0 时输入框为空且可删空**、超范围输入标记非法、记住上次提前量 |
-| `ui/TodoViewModelTest` | 表单开合、非法表单不落库、落库并排定、降级提示、编辑不新增、切换完成、**删除需确认**、权限变化提示 |
+| `ui/TodoViewModelTest` | 表单开合、非法表单不落库、落库并排定、降级提示、编辑不新增、切换完成、**删除需确认**、权限变化提示、**只改本次中途返回不多出待办**、**日历跳转请求只发一次** |
+| `ui/CalendarPagingTest` | 页↔日期互逆、同页等价（同一周/同一月任意一天）、页号 +1 恰好前进一期、跨年跨月、**页码预算覆盖今天前后 50 年且越界会断言** |
 | `notify/NotificationHelperTest` | 渠道创建与重要性、幂等、通知 id 映射、通知内容、点击跳转、取消、权限识别 |
 
 ### 4.2 仪器化测试（API 35 模拟器）
 
 `TodoListUiTest` 覆盖：标题/倒计时/设置入口、新增待办、名称校验拦截、勾选完成后状态、
 **选择闹钟式后徽章更新**、**未来时段不出现勾选框**、**删除先弹确认框（取消/确认两条路径）**、
-底部四个视图切换、设置页开合。
+底部四个视图切换、设置页开合，以及日历相关的三条回归：
+**打开日视图就停在今天**、**翻页按钮依次前进且来回对称**、**从月视图切回日视图仍停在今天**。
 
 要点：
 * 通知权限用 `GrantPermissionRule` 预先授予，否则系统权限对话框会盖住界面，
@@ -184,6 +186,47 @@ $pkg='com.example.todolist'
 
 ---
 
+### 4.4 日历翻页：设计、踩过的坑与验证
+
+日历（日/周/月视图）用 `HorizontalPager` + **绝对基准的页码换算**实现，相关代码集中在
+`ui/TodoListScreen.kt`：
+
+| 位置 | 作用 |
+|---|---|
+| `CalendarPager`（约 L614） | 分页容器：导航条 + `HorizontalPager` |
+| `MIDDLE` / `PAGE_COUNT`（约 L900） | 页码预算：锚点页 40000、总页数 80001（日视图 ±109 年） |
+| `dateOfPage` / `pageOfDate` | 页 ↔ 日期互逆换算（纯函数，`ui/CalendarPagingTest` 钉住不变量） |
+| `checkPagingBudget` | 边界自检：调试构建启动即断言，越界立刻崩而不是等用户滑到头 |
+| `CalendarPager` 内的 `LaunchedEffect(tab, jumpRequest)` | **唯一起点**：切视图时先对齐页码，再持续上报当前显示的那一期 |
+
+三个反复出现、最终定位到根因的问题（都已加回归测试）：
+
+1. **页码预算按日视图算**。三种粒度共用一套页号空间，1 页在日视图是 1 天、在月视图是 1 月。
+   早期 `MIDDLE = 6000`（锚点 2000-01-01）时日视图只覆盖到 **2016 年**，
+   「回到今天」被 `coerceIn` 夹到末页，表现就是「怎么滑都在远古、回不到今天」。
+2. **切视图时页码必须先对齐再上报**。页码含义随粒度变化，切到月视图的那一帧若拿日视图的
+   页码按「月」解释，会得到公元几千年这种垃圾日期并被当成「当前日期」写回上层。
+   因此「切视图对齐」和「上报当前期」是**同一个** `LaunchedEffect` 里的先后两步，
+   且切视图用瞬时跳转（视图切换本来就不该有滑动动画）。
+3. **长期运行的效应必须用 `rememberUpdatedState` 取最新回调**。上面那个效应只以
+   `(tab, jumpRequest)` 为键、会一直跑，`collect` 里若直接用 `onDisplay` 参数，
+   拿到的永远是首次组合时那份（内部闭包着过期的 `uiState.selectedDate`），
+   于是「是否变化」的判断用过期值，上报被静默丢弃——实测连点「下一个」再点「上一个」，
+   顶部标题回不去。**这个坑和 Compose 无关的直觉都要靠日志才定位到。**
+
+另外两个交互细节：
+
+* 翻页基准用 `PagerState.targetPage`（动画目标页）而不是 `currentPage`：
+  后者在动画途中还没变，连点两次「下一个」会算出同一个目标、第二次被吞。
+* 「回到今天/本周/本月」除了翻页，还会把上层日期显式落回今天；
+  否则月视图里日期会停在「当月 1 号」，切回日视图就落到 1 号而不是今天。
+
+验证方式见 `ui/CalendarPagingTest`（11 个不变量用例：互逆、单调、同页等价、预算覆盖、
+越界断言）与 `TodoListUiTest` 里的「打开日视图就停在今天」「翻页按钮依次前进且来回对称」
+「从月视图切回日视图仍停在今天」。
+
+---
+
 ## 5. 行为约定与已知限制
 
 - **不会补发过期提醒**：提醒时刻已过去的场次在对账时被跳过，避免装上 App 后被历史事项刷屏。
@@ -195,8 +238,9 @@ $pkg='com.example.todolist'
   这是系统行为而非代码缺陷；需要准时请选闹钟式。
 - **闹钟式需要精确闹钟权限**（Android 12+ 默认关闭），设置页与顶部横幅都提供入口。
 - **全屏 Intent 的显示受系统策略约束**：部分厂商 ROM 需要额外允许「后台弹出界面」。
-- **数据库 v2 使用 `fallbackToDestructiveMigration`**：v1→v2 是结构性变更且尚未发版，
-  正式发布前必须替换为真正的 `Migration`（schema 已导出，可用于比对）。
+- **数据库当前 v5，全部使用 `fallbackToDestructiveMigration`**：仍在测试阶段、每次都允许清库，
+  正式发布前必须替换为真正的 `Migration`（已导出 schema，可用于比对），
+  并把 `versionCode` / `versionName` / 包名（现在是 `com.example.todolist`）一起改掉。
 - 设置中的「默认使用闹钟式」会影响新建待办的默认选项，不改变已有待办。
 
 ---
@@ -238,12 +282,18 @@ $pkg='com.example.todolist'
 |---|---|---|
 | 模拟器冷启动 | 约 60s+ | **约 20s** |
 | 应用冷启动（`am start -W` TotalTime） | — | **2.27s** |
-| 一次完整 instrumented 测试（构建+安装+用例） | 2–3 分钟 | **约 30–45s** |
-| 完整单测（117 用例 / 9 类） | 曾卡住 20 分钟以上 | **约 5s** |
+| 一次完整 instrumented 测试（构建+安装+22 个用例） | 2–3 分钟 | **约 40–60s** |
+| 完整单测（164 用例 / 11 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
 
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
 以及把 ViewModel 里常驻的每秒 `while(true)` 轮询改成按需冷流
 （无限循环会让 `runTest` 的虚拟调度器永远不空闲）。
+
+> 稳定性提醒：本机模拟器跑整批 instrumented 测试时偶发 `INSTRUMENTATION_ABORTED:
+> System has crashed`（guest 的 system_server 崩了，与用例无关，重启模拟器即可）。
+> 遇到时先 `adb shell uptime` 看负载，必要时用 `-no-snapshot-load` 冷启动，
+> 并且务必等 `qemu-system-x86_64` 进程完全退出后再启动，否则会报
+> 「Running multiple emulators with the same AVD」。
 
 ---
 
