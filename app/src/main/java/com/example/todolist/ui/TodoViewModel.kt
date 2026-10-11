@@ -190,6 +190,13 @@ class TodoViewModel(
     fun selectDate(date: LocalDate) =
         updateLocal { it.copy(selectedDate = date, tab = NavTab.DAY) }
 
+    /**
+     * 只更新「当前看的日期」，不切换视图。
+     *
+     * 日历视图翻页时用这个：翻到下一周不该把用户从周视图踢到日视图。
+     */
+    fun selectDateSoft(date: LocalDate) = updateLocal { it.copy(selectedDate = date) }
+
     /** 左右滑动切换：日视图 ±1 天，周视图 ±7 天。 */
     fun shiftDate(days: Long) = updateLocal { it.copy(selectedDate = it.selectedDate.plusDays(days)) }
 

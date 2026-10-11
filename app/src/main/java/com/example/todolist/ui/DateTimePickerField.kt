@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -287,10 +288,9 @@ private fun ChineseConfiguration(): Configuration {
  * 中文环境下要求 2026/01/01 这种补零写法，用户输入 2026/1/1 会被判为非法，
  * 报错也不说明到底要什么格式。改成三个数字框后年月日各填各的，不再有格式歧义。
  *
- * 这里刻意不再由 AlertDialog 提供标题：Material3 的 DatePicker 自带
- * 「选择日期」头部，外面再套一个标题会重复出现两次。
+ * 日历部分用自绘的 [CompactCalendar]：Material3 的 DatePicker 最小宽度大于
+ * 对话框可用宽度，最右一列会被裁掉，用户已反馈过两次。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DatePickerDialog(
     initial: LocalDate,
@@ -300,6 +300,8 @@ private fun DatePickerDialog(
     var yearText by remember { mutableStateOf(initial.year.toString()) }
     var monthText by remember { mutableStateOf(initial.monthValue.toString()) }
     var dayText by remember { mutableStateOf(initial.dayOfMonth.toString()) }
+    // 日历当前展示的月份，与三个输入框双向联动
+    var shownMonth by remember { mutableStateOf(YearMonth.from(initial)) }
 
     val parsed = DateFormats.parseDateParts(yearText, monthText, dayText)
 
@@ -312,16 +314,20 @@ private fun DatePickerDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CompositionLocalProvider(LocalConfiguration provides ChineseConfiguration()) {
-                    DatePicker(
-                        state = rememberDatePickerState(
-                            initialSelectedDateMillis = initial
-                                .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
-                        ),
-                        showModeToggle = false,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                // 自绘日历：不再用 Material3 的 DatePicker（它最小宽度大于对话框可用宽度，
+                // 最右一列会被裁掉）。点某天会同步刷新下面三个输入框。
+                CompactCalendar(
+                    month = shownMonth,
+                    selected = parsed ?: initial,
+                    today = LocalDate.now(),
+                    onSelect = { picked ->
+                        yearText = picked.year.toString()
+                        monthText = picked.monthValue.toString()
+                        dayText = picked.dayOfMonth.toString()
+                        shownMonth = YearMonth.from(picked)
+                    },
+                    onMonthChange = { shownMonth = it },
+                )
 
                 Text("手动输入", style = MaterialTheme.typography.labelLarge)
                 Row(

@@ -286,6 +286,78 @@ class DateFormatsTest {
         assertThat(occurrence.endAt).isEqualTo(at(2026, 5, 20, 10, 30))
     }
 
+    // -------------------------------------------------- 改规则后重算截止日期
+
+    @Test
+    fun `改重复于哪些天后截止日期跟着重算`() {
+        val start = at(2026, 5, 11, 9) // 2026-05-11 是周一
+        // 只勾周三，重复 3 次 -> 5/13、5/20、5/27
+        val wednesdayOnly = DraftFormState(
+            startAt = start,
+            endAt = start + 3_600_000,
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.WEDNESDAY),
+            recurrenceCount = 3,
+        )
+        assertThat(deadlineIsoForCurrentRule(wednesdayOnly, TestData.ZONE))
+            .isEqualTo("2026-05-27")
+
+        // 再勾上周一：第 3 场变成 5/18，截止日期必须跟着变
+        val mondayAndWednesday = wednesdayOnly.copy(
+            weekDays = setOf(java.time.DayOfWeek.MONDAY, java.time.DayOfWeek.WEDNESDAY),
+        )
+        assertThat(deadlineIsoForCurrentRule(mondayAndWednesday, TestData.ZONE))
+            .isEqualTo("2026-05-18")
+    }
+
+    @Test
+    fun `改每月几号后截止日期跟着重算`() {
+        val start = at(2026, 5, 1, 9)
+        val day1 = DraftFormState(
+            startAt = start,
+            endAt = start + 3_600_000,
+            recurrence = Recurrence.MONTHLY,
+            monthDays = setOf(1),
+            recurrenceCount = 3,
+        )
+        // 5/1、6/1、7/1
+        assertThat(deadlineIsoForCurrentRule(day1, TestData.ZONE)).isEqualTo("2026-07-01")
+
+        // 改成每月 1 号与 15 号：5/1、5/15、6/1 -> 6/1
+        val day1And15 = day1.copy(monthDays = setOf(1, 15))
+        assertThat(deadlineIsoForCurrentRule(day1And15, TestData.ZONE)).isEqualTo("2026-06-01")
+    }
+
+    @Test
+    fun `没有次数时不推算截止日期`() {
+        val noCount = DraftFormState(
+            startAt = at(2026, 5, 11, 9),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.MONDAY),
+            recurrenceCount = null,
+        )
+        assertThat(deadlineIsoForCurrentRule(noCount, TestData.ZONE)).isNull()
+
+        // 一次性待办也不该推算
+        val oneOff = noCount.copy(recurrence = Recurrence.NONE, recurrenceCount = 5)
+        assertThat(deadlineIsoForCurrentRule(oneOff, TestData.ZONE)).isNull()
+    }
+
+    @Test
+    fun `生效起始日参与截止日期推算`() {
+        val state = DraftFormState(
+            startAt = at(2026, 5, 11, 9),
+            endAt = at(2026, 5, 11, 10),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(java.time.DayOfWeek.MONDAY),
+            recurrenceStartDate = "2026-06-01",
+            recurrenceCount = 3,
+        )
+        // 6/1、6/8、6/15（5 月的周一不计入）
+        assertThat(deadlineIsoForCurrentRule(state, TestData.ZONE)).isEqualTo("2026-06-15")
+    }
+
     // -------------------------------------------------- 通用
 
     private fun occursOn(todo: com.example.todolist.domain.Todo, date: LocalDate): Boolean =

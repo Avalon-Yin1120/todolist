@@ -24,6 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.derivedStateOf
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -194,8 +197,7 @@ fun TodoRoute(
             onDismissDialog = viewModel::dismissDialog,
             onSelectTab = viewModel::selectTab,
             onSelectDate = viewModel::selectDate,
-            onShiftDate = viewModel::shiftDate,
-            onShiftMonth = viewModel::shiftMonth,
+            onSelectDateSoft = viewModel::selectDateSoft,
             onSetGrouping = viewModel::setGrouping,
             onOpenSettings = viewModel::openSettings,
             onRequestExactAlarmPermission = onRequestExactAlarmPermission,
@@ -225,8 +227,8 @@ fun TodoListScreen(
     onDismissDialog: () -> Unit,
     onSelectTab: (NavTab) -> Unit,
     onSelectDate: (LocalDate) -> Unit,
-    onShiftDate: (Long) -> Unit,
-    onShiftMonth: (Long) -> Unit,
+    /** 只改当前看的日期，不切视图（日历翻页用） */
+    onSelectDateSoft: (LocalDate) -> Unit,
     onSetGrouping: (ListGrouping) -> Unit,
     onOpenSettings: () -> Unit,
     onRequestExactAlarmPermission: () -> Unit,
@@ -235,9 +237,6 @@ fun TodoListScreen(
     onDismissForm: () -> Unit,
     onSubmitForm: () -> Unit,
 ) {
-    // 滑动方向：+1 表示往「后一天/后一周/后一月」翻，用于决定切换动画方向
-    var shiftDirection by remember { mutableIntStateOf(0) }
-
     Scaffold(
         topBar = {
             TopHeader(
@@ -306,56 +305,12 @@ fun TodoListScreen(
             } else {
                 CalendarPager(
                     tab = uiState.tab,
+                    // selectedDate 只作为锚点（进入视图那一刻的日期）
                     selectedDate = uiState.selectedDate,
-                    // 翻页只改日期，**不要**用 onSelectDate：那个语义是「点某天跳到日视图」，
-                    // 用它会让「翻一页」变成「切到日视图」。
-                    onPageDate = { date ->
-                        when (uiState.tab) {
-                            NavTab.WEEK -> onShiftDate(
-                                java.time.temporal.ChronoUnit.DAYS
-                                    .between(uiState.selectedDate, date),
-                            )
-                            NavTab.MONTH -> onShiftMonth(
-                                java.time.temporal.ChronoUnit.MONTHS.between(
-                                    java.time.YearMonth.from(uiState.selectedDate),
-                                    java.time.YearMonth.from(date),
-                                ),
-                            )
-                            else -> onShiftDate(
-                                java.time.temporal.ChronoUnit.DAYS
-                                    .between(uiState.selectedDate, date),
-                            )
-                        }
-                    },
-                    onSwipe = { delta ->
-                        shiftDirection = if (delta > 0) 1 else -1
-                        when (uiState.tab) {
-                            NavTab.DAY -> onShiftDate(delta.toLong())
-                            NavTab.WEEK -> onShiftDate(delta * 7L)
-                            else -> onShiftMonth(delta.toLong())
-                        }
-                    },
-                    // 「回到今天」保持当前视图：在周视图就回到本周、月视图回到本月。
-                    // 这里直接按视图把日期挪到目标那一页（等价于翻页），
-                    // 不用 onSelectDate——那个会跳到日视图。
-                    onBackToToday = {
-                        val today = CalendarLayout.toLocalDate(now, zone)
-                        when (uiState.tab) {
-                            NavTab.WEEK -> onShiftDate(
-                                java.time.temporal.ChronoUnit.DAYS
-                                    .between(uiState.selectedDate, today),
-                            )
-                            NavTab.MONTH -> onShiftMonth(
-                                java.time.temporal.ChronoUnit.MONTHS.between(
-                                    java.time.YearMonth.from(uiState.selectedDate),
-                                    java.time.YearMonth.from(today),
-                                ),
-                            )
-                            else -> onShiftDate(
-                                java.time.temporal.ChronoUnit.DAYS
-                                    .between(uiState.selectedDate, today),
-                            )
-                        }
+                    today = CalendarLayout.toLocalDate(now, zone),
+                    // 显示的那一期变了：只更新上层日期用于倒计时与切回视图，不反向驱动 pager
+                    onDisplay = { date ->
+                        if (date != uiState.selectedDate) onSelectDateSoft(date)
                     },
                     onPickDate = onSelectDate,
                 ) { periodDate ->
@@ -629,26 +584,28 @@ private fun TodoOverview(
 private fun CalendarPager(
     tab: NavTab,
     selectedDate: LocalDate,
-    /** 翻页后把新日期同步给上层（只改日期，不切视图） */
-    onPageDate: (LocalDate) -> Unit,
-    onSwipe: (Int) -> Unit,
-    onBackToToday: () -> Unit,
+    /** 今天，用于「回到今天/本周/本月」 */
+    today: LocalDate,
+    /** 当前显示的这一期变了（滑动或翻页后）通知上层，用于更新倒计时等 */
+    onDisplay: (LocalDate) -> Unit,
     /** 点某一天；这个动作的语义是「跳到日视图」 */
     onPickDate: (LocalDate) -> Unit,
     content: @Composable (LocalDate) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
     /**
-     * 锚点必须与「一页」对齐，页码与日期才严格互逆
-     * （即 pageOf(dateOf(page)) == page，不会出现「设置日期触发滚动、滚动又改日期」的回环）。
-     * 周视图对齐到周一、月视图对齐到 1 号；锚点只在切换视图时取一次。
+     * 锚点：页码与日期的换算基准。
+     *
+     * 进入视图时取当前选中日期，之后**每次滑停或翻页都把锚点对齐到当前页**，
+     * 于是 MIDDLE 永远是「现在这一页」，页码不会随会话累积偏移。
+     * 与「一页」对齐（周=周一、月=1 号），保证 pageOf(dateOf(page)) == page。
      */
-    val anchor = remember(tab) {
-        when (tab) {
-            NavTab.WEEK -> CalendarLayout.weekStart(selectedDate)
-            NavTab.MONTH -> selectedDate.withDayOfMonth(1)
-            else -> selectedDate
-        }
+    fun aligned(date: LocalDate): LocalDate = when (tab) {
+        NavTab.WEEK -> CalendarLayout.weekStart(date)
+        NavTab.MONTH -> date.withDayOfMonth(1)
+        else -> date
     }
+    var anchor by remember(tab) { mutableStateOf(aligned(selectedDate)) }
     val pagerState = rememberPagerState(initialPage = MIDDLE, pageCount = { PAGE_COUNT })
 
     fun dateOf(page: Int): LocalDate = when (tab) {
@@ -669,33 +626,61 @@ private fun CalendarPager(
         else -> MIDDLE + java.time.temporal.ChronoUnit.DAYS.between(anchor, date).toInt()
     }
 
-    // 外部改了日期（点周/月视图里的某天、回到今天）：平滑滚到对应页
-    LaunchedEffect(tab, selectedDate) {
-        val target = pageOf(selectedDate).coerceIn(0, PAGE_COUNT - 1)
-        if (target != pagerState.currentPage) {
-            pagerState.animateScrollToPage(target)
-        }
+    /**
+     * 当前显示的这一期，跟随 [PagerState.currentPage]。
+     *
+     * 显式维护而不是用 derivedStateOf：`anchor` 是本函数的局部 `var`（经 mutableStateOf 委托），
+     * derivedStateOf 的闭包会捕获**旧的** anchor，算出的日期差一整期，
+     * 于是「翻页」按钮第二次点击会算回同一页，表现为只翻得动一次。
+     *
+     * 数据流是单向的：只由 pager 的位置推导，没有「上层状态变了就滚回去」的回写。
+     */
+    var shownDate by remember(tab) { mutableStateOf(aligned(selectedDate)) }
+
+    // 页变了：锚点跟进到当前页（MIDDLE 永远是「现在这一页」），并通知上层更新倒计时
+    LaunchedEffect(tab, pagerState.currentPage) {
+        val current = dateOf(pagerState.currentPage)
+        if (aligned(current) != anchor) anchor = aligned(current)
+        shownDate = current
+        onDisplay(current)
     }
 
-    // 用户滑停后把日期同步回上层，顶部标题与倒计时随之更新。
-    //
-    // loadedDate 用 rememberUpdatedState 跟随最新值：如果直接在 collect 里读 selectedDate，
-    // 闭包会捕获 effect 启动时的旧值，于是「前进一页再后退回来」时会误判为没变化、
-    // 不再回调，表现为标题停在原处不动。
-    val loadedDate by rememberUpdatedState(selectedDate)
-    LaunchedEffect(tab, anchor) {
-        snapshotFlow { pagerState.settledPage }.collect { page ->
-            val date = dateOf(page)
-            if (date != loadedDate) onPageDate(date)
+    /** 翻到某一期：只驱动 pager，上层通过 onDisplay 得到通知。 */
+    fun goTo(date: LocalDate) {
+        val target = pageOf(date).coerceIn(0, PAGE_COUNT - 1)
+        scope.launch { pagerState.animateScrollToPage(target) }
+    }
+
+    /** 相对当前页前后翻一期。 */
+    fun stepPage(delta: Int) {
+        scope.launch {
+            pagerState.animateScrollToPage(
+                (pagerState.currentPage + delta).coerceIn(0, PAGE_COUNT - 1),
+            )
         }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
         PeriodNavigator(
-            label = DateFormats.shortDate(dateOf(pagerState.currentPage)),
-            onPrevious = { onSwipe(-1) },
-            onNext = { onSwipe(1) },
-            onBackToToday = onBackToToday,
+            label = when (tab) {
+                NavTab.WEEK -> DateFormats.dateRange(
+                    CalendarLayout.weekStart(shownDate),
+                    CalendarLayout.weekStart(shownDate).plusDays(6),
+                )
+                NavTab.MONTH -> DateFormats.monthLabel(shownDate)
+                else -> DateFormats.fullDate(shownDate)
+            },
+            backLabel = when (tab) {
+                NavTab.WEEK -> "回到本周"
+                NavTab.MONTH -> "回到本月"
+                else -> "回到今天"
+            },
+            // 用相对页码而不是「当前日期 ± 1 期」：onClick 的 lambda 会缓存
+            // 组合时的 anchor/shownDate，翻页后仍按旧值算，于是算回同一页、翻不动。
+            // pagerState 是稳定对象，currentPage 每次都取最新值。
+            onPrevious = { stepPage(-1) },
+            onNext = { stepPage(1) },
+            onBackToToday = { goTo(today) },
         )
         HorizontalPager(
             state = pagerState,
@@ -712,6 +697,8 @@ private fun CalendarPager(
 @Composable
 private fun PeriodNavigator(
     label: String,
+    /** 「回到今天/本周/本月」按钮的文案，按当前视图给出 */
+    backLabel: String,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBackToToday: () -> Unit,
@@ -732,7 +719,7 @@ private fun PeriodNavigator(
         TextButton(
             onClick = onBackToToday,
             modifier = Modifier.testTag(TAG_BACK_TO_TODAY),
-        ) { Text("回到今天") }
+        ) { Text(backLabel) }
         IconButton(
             onClick = onNext,
             modifier = Modifier.testTag(TAG_PERIOD_NEXT),

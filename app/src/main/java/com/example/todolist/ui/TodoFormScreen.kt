@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.remember
 import java.time.LocalDate
+import java.time.YearMonth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.rememberDatePickerState
@@ -246,7 +247,10 @@ fun TodoFormContent(
             Recurrence.entries.forEach { option ->
                 FilterChip(
                     selected = state.recurrence == option,
-                    onClick = { form.setRecurrence(option) },
+                    onClick = {
+                        form.setRecurrence(option)
+                        resyncDeadline(form, state)
+                    },
                     // NONE 显示为「单次」：按钮标题写「重复」会和整行标题重复，也不像个选项
                     label = { Text(recurrenceChipLabel(option)) },
                     modifier = Modifier
@@ -270,7 +274,10 @@ fun TodoFormContent(
                 RecurrenceOptions.WEEK_ORDER.forEach { day ->
                     FilterChip(
                         selected = day in state.weekDays,
-                        onClick = { form.toggleWeekDay(day) },
+                        onClick = {
+                            form.toggleWeekDay(day)
+                            resyncDeadline(form, state)
+                        },
                         label = { Text(RecurrenceOptions.shortLabel(day)) },
                         modifier = Modifier
                             .weight(1f)
@@ -300,7 +307,10 @@ fun TodoFormContent(
                 ) {
                     week.forEach { day ->
                         OutlinedButton(
-                            onClick = { form.toggleMonthDay(day) },
+                            onClick = {
+                                form.toggleMonthDay(day)
+                                resyncDeadline(form, state)
+                            },
                             contentPadding = PaddingValues(0.dp),
                             colors = if (day in state.monthDays) {
                                 ButtonDefaults.outlinedButtonColors(
@@ -592,12 +602,11 @@ private fun monthDaysSummary(days: Set<Int>): String =
     if (days.isEmpty()) "未选择" else "已选：" + days.sorted().joinToString("、") + " 号"
 
 /**
- * 简单的日期选择对话框：日历 + 年/月/日三个输入框。
+ * 简单的日期选择对话框：自绘日历 + 年/月/日三个输入框。
  *
  * 与时间字段用的那个是同一套交互（见 DateTimePickerField 里的 DatePickerDialog），
  * 这里独立一份是为了不让表单依赖时间字段的实现细节。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SimpleDatePickerDialog(
     initial: LocalDate,
@@ -607,11 +616,12 @@ private fun SimpleDatePickerDialog(
     var yearText by remember { mutableStateOf(initial.year.toString()) }
     var monthText by remember { mutableStateOf(initial.monthValue.toString()) }
     var dayText by remember { mutableStateOf(initial.dayOfMonth.toString()) }
+    var shownMonth by remember { mutableStateOf(YearMonth.from(initial)) }
     val parsed = DateFormats.parseDateParts(yearText, monthText, dayText)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        // 不设 title：DatePicker 自带头部，外面再套会重复
+        // 不设 title：日历自己带月份标题
         text = {
             Column(
                 modifier = Modifier
@@ -619,13 +629,18 @@ private fun SimpleDatePickerDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                DatePicker(
-                    state = rememberDatePickerState(
-                        initialSelectedDateMillis = initial
-                            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli(),
-                    ),
-                    showModeToggle = false,
-                    modifier = Modifier.fillMaxWidth(),
+                // 自绘日历：Material3 的 DatePicker 最小宽度大于对话框可用宽度，右列会被裁
+                CompactCalendar(
+                    month = shownMonth,
+                    selected = parsed ?: initial,
+                    today = LocalDate.now(),
+                    onSelect = { picked ->
+                        yearText = picked.year.toString()
+                        monthText = picked.monthValue.toString()
+                        dayText = picked.dayOfMonth.toString()
+                        shownMonth = YearMonth.from(picked)
+                    },
+                    onMonthChange = { shownMonth = it },
                 )
                 Text("手动输入", style = MaterialTheme.typography.labelLarge)
                 Row(
@@ -689,4 +704,40 @@ private fun SimpleDatePickerDialog(
             ) { Text("取消") }
         },
     )
+}
+/**
+ * 规则或「重复于哪些天」变化后，重新推算截止日期。
+ *
+ * 次数与截止日期是联动的：次数已经定了的时候，改了每周哪几天 / 每月哪几号，
+ * 最后一场落在哪天就变了。不重算的话界面上会留着旧截止日期，与实际规则不符。
+ *
+ * 从 [DraftFormStateHolder.state] 取最新值而不是用传入的旧 state：
+ * toggleWeekDay 刚写进去，闭包捕获的 state 还是变更前那一份。
+ */
+private fun resyncDeadline(form: DraftFormStateHolder, @Suppress("UNUSED_PARAMETER") stale: DraftFormState) {
+    form.setRecurrenceEndDate(deadlineIsoForCurrentRule(form.state.value, ZoneId.systemDefault()))
+}
+
+/**
+ * 按当前规则与次数算出截止日期（yyyy-MM-dd）；不该算时返回 null。
+ *
+ * 抽成纯函数是为了能直接单测：改「重复于哪些天 / 几号」或改周期规则后，
+ * 已定的次数对应哪一天就变了，界面上必须跟着更新——这段逻辑曾经缺失，
+ * 导致用户看到过期的截止日期。
+ */
+internal fun deadlineIsoForCurrentRule(state: DraftFormState, zone: ZoneId): String? {
+    val count = state.recurrenceCount ?: return null
+    val start = state.startAt ?: return null
+    if (!state.recurrence.isRecurring || count <= 0) return null
+    val todo = Todo(
+        name = "",
+        startAt = start,
+        endAt = state.endAt ?: start,
+        recurrence = state.recurrence,
+        weekDays = state.weekDays,
+        monthDays = state.monthDays,
+        recurrenceStartDate = state.recurrenceStartDate,
+    )
+    return RecurrenceExpander.endDateForCount(todo, count, zone)
+        ?.format(DateTimeFormatter.ISO_LOCAL_DATE)
 }
