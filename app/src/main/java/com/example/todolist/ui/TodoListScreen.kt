@@ -104,6 +104,18 @@ fun TodoRoute(
 ) {
     val animMs = TodoRouteAnim.durationMs
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // 从系统设置（电池优化白名单/精确闹钟）返回时刷新权限状态
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshPermissions()
+                viewModel.refreshBatteryOptimization()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     // 时间由界面按需收集（每秒一次），ViewModel 不做常驻轮询
     val now by viewModel.timeFlow.collectAsStateWithLifecycle(initialValue = viewModel.now())
     val snackbarHostState = remember { SnackbarHostState() }
@@ -175,9 +187,15 @@ fun TodoRoute(
             SettingsScreen(
                 state = settings,
                 onChange = viewModel::changeSetting,
-                onBack = viewModel::closeSettings,
+                onBack = {
+                    viewModel.closeSettings()
+                    // 从系统设置返回后重新读一次白名单状态
+                    viewModel.refreshBatteryOptimization()
+                },
                 exactAlarmAllowed = uiState.canScheduleExact,
                 onRequestExactAlarmPermission = onRequestExactAlarmPermission,
+                batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
             )
             return@AnimatedContent
         }

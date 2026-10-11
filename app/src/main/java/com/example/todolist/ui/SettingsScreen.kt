@@ -43,6 +43,9 @@ fun SettingsScreen(
     onBack: () -> Unit,
     exactAlarmAllowed: Boolean,
     onRequestExactAlarmPermission: () -> Unit,
+    /** 是否已允许后台运行（电池优化白名单） */
+    batteryOptimizationIgnored: Boolean = true,
+    onRequestIgnoreBatteryOptimization: () -> Unit = {},
 ) {
     Scaffold(
         modifier = Modifier.testTag(TAG_SETTINGS_SCREEN),
@@ -92,6 +95,26 @@ fun SettingsScreen(
             )
             if (!exactAlarmAllowed) {
                 TextButton(onClick = onRequestExactAlarmPermission) { Text("去开启") }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            SectionTitle("后台运行")
+            Text(
+                text = if (batteryOptimizationIgnored) {
+                    "已允许后台运行，到点提醒不会被系统限制。"
+                } else {
+                    "系统可能限制本应用在后台运行，导致到点提醒变晚甚至不响。" +
+                        "允许后台运行后，闹钟式提醒才能准时响铃并亮屏。"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!batteryOptimizationIgnored) {
+                TextButton(
+                    onClick = onRequestIgnoreBatteryOptimization,
+                    modifier = Modifier.testTag(TAG_BATTERY_EXEMPT),
+                ) { Text("允许后台运行") }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -185,3 +208,4 @@ sealed interface SettingsChange {
 const val TAG_SETTING_ALARM = "setting_alarm"
 const val TAG_SETTING_CONFIRM_DELETE = "setting_confirm_delete"
 const val TAG_SETTING_WARN_OVERLAP = "setting_warn_overlap"
+const val TAG_BATTERY_EXEMPT = "battery_exempt"

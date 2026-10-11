@@ -81,6 +81,8 @@ data class TodoUiState(
     val todos: List<Todo> = emptyList(),
     val editState: EditState = EditState(),
     val canScheduleExact: Boolean = true,
+    /** 是否已允许后台运行（电池优化白名单） */
+    val batteryOptimizationIgnored: Boolean = true,
     val notice: Notice? = null,
     val dialog: DialogRequest? = null,
     /** 默认进入日视图 */
@@ -121,6 +123,8 @@ class TodoViewModel(
     private val settings: SettingsStore,
     private val clock: Clock,
     private val canScheduleExactAlarms: () -> Boolean,
+    /** 后台运行（电池优化白名单）能力；为空表示不检查（测试里常用） */
+    private val batteryOptimization: com.example.todolist.sys.BatteryOptimizationPermission? = null,
     private val zone: ZoneId = ZoneId.systemDefault(),
 ) : AndroidViewModel(application) {
 
@@ -136,7 +140,11 @@ class TodoViewModel(
     private val editState = MutableStateFlow(EditState())
 
     private val localState = MutableStateFlow(
-        LocalState(canScheduleExact = canScheduleExactAlarms(), settings = readSettings())
+        LocalState(
+            canScheduleExact = canScheduleExactAlarms(),
+            batteryOptimizationIgnored = batteryOptimization?.isIgnoringBatteryOptimizations() ?: true,
+            settings = readSettings(),
+        )
     )
 
     val uiState: StateFlow<TodoUiState> = combine(
@@ -148,6 +156,7 @@ class TodoViewModel(
             todos = todos,
             editState = edit,
             canScheduleExact = local.canScheduleExact,
+            batteryOptimizationIgnored = local.batteryOptimizationIgnored,
             notice = local.notice,
             dialog = local.dialog,
             tab = local.tab,
@@ -408,6 +417,21 @@ class TodoViewModel(
     // ---------------------------------------------------------------- 权限与提示
 
     /** 从系统设置返回后刷新精确闹钟权限状态。 */
+    /** 请求允许后台运行（电池优化白名单）。 */
+    fun requestIgnoreBatteryOptimization() {
+        batteryOptimization?.requestIgnore()
+    }
+
+    /** 从系统设置返回后重新读取权限状态。 */
+    fun refreshBatteryOptimization() {
+        updateLocal {
+            it.copy(
+                batteryOptimizationIgnored =
+                    batteryOptimization?.isIgnoringBatteryOptimizations() ?: true,
+            )
+        }
+    }
+
     fun refreshPermissions() {
         val granted = canScheduleExactAlarms()
         val previous = localState.value.canScheduleExact
@@ -430,6 +454,7 @@ class TodoViewModel(
     /** 视图状态的内部聚合；放在内部是为了不给外部暴露可变入口。 */
     private data class LocalState(
         val canScheduleExact: Boolean,
+        val batteryOptimizationIgnored: Boolean = true,
         val settings: SettingsUiState,
         val notice: Notice? = null,
         val dialog: DialogRequest? = null,
@@ -462,6 +487,7 @@ class TodoViewModel(
                         canScheduleExactAlarms = {
                             graph.exactAlarmPermission.canScheduleExactAlarms()
                         },
+                        batteryOptimization = graph.batteryOptimization,
                     ) as T
             }
         }

@@ -104,23 +104,62 @@ open class NotificationHelper(private val context: Context) {
 
         val notification = builder.build()
 
-        if (!canPostNotifications()) {
-            Log.w(TAG, "无法发送提醒：通知权限未开启（todo id=${todo.id}）")
-            return
-        }
         val notificationId = notificationIdOf(todo.id)
-        NotificationManagerCompat.from(context).notify(notificationId, notification)
-
-        // 闹钟式：额外启动前台服务，确保响铃、亮屏并弹出闹钟页
-        if (todo.mode == ReminderMode.ALARM) {
-            runCatching { AlarmRingService.start(context, todo.id, todo.name) }
-                .onFailure { Log.w(TAG, "启动闹钟服务失败：${it.message}") }
+        if (canPostNotifications()) {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+            Log.i(
+                TAG,
+                "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +
+                    "name=${todo.name}",
+            )
+        } else {
+            // 不开日志就会「什么都没发生」：把原因明确记下来
+            Log.w(TAG, "通知权限未开启，无法发出通知：todo=${todo.id}")
         }
-        Log.i(
-            TAG,
-            "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +
-                "name=${todo.name}",
-        )
+
+        // 闹钟式：额外启动前台服务，确保响铃、亮屏并弹出闹钟页。
+        // 注意这一步与通知权限无关，必须独立执行——否则没给通知权限就等于完全不提醒。
+        if (todo.mode == ReminderMode.ALARM) {
+            startRingService(todo)
+        }
+    }
+
+    /**
+     * 启动闹钟响铃服务。
+     *
+     * Android 12+ 严格限制「后台启动前台服务」：被拒绝时异常原先只是被 runCatching
+     * 吞成一条 WARN，用户侧的表现就是「到点了什么都没发生」。
+     * 这里把失败原因明确记下来，并尝试直接拉起闹钟页作为兜底——
+     * 该页自带 setShowWhenLocked / setTurnScreenOn，被允许时同样能亮屏并响铃。
+     */
+    private fun startRingService(todo: Todo) {
+        try {
+            AlarmRingService.start(context, todo.id, todo.name)
+            Log.i(TAG, "已请求启动闹钟响铃服务：todo=${todo.id}")
+        } catch (e: Exception) {
+            Log.e(
+                TAG,
+                "启动闹钟响铃服务失败（Android 12+ 可能限制后台启动前台服务）：" +
+                    "${e.javaClass.simpleName} ${e.message}",
+            )
+            val alarmIntent = Intent(
+                context,
+                com.example.todolist.ui.alarm.AlarmActivity::class.java,
+            ).apply {
+                action = com.example.todolist.ui.alarm.AlarmActivity.ACTION_SHOW_ALARM
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
+                )
+                putExtra(com.example.todolist.ui.alarm.AlarmActivity.EXTRA_TODO_ID, todo.id)
+            }
+            runCatching { context.startActivity(alarmIntent) }
+                .onSuccess { Log.i(TAG, "已改为直接拉起闹钟页：todo=${todo.id}") }
+                .onFailure {
+                    Log.e(TAG, "直接拉起闹钟页也失败：${it.javaClass.simpleName} ${it.message}")
+                }
+        }
     }
 
     /** 主动取消某条待办的通知。 */

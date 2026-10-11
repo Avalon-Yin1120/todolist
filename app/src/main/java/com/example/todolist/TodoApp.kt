@@ -100,6 +100,10 @@ class AppGraph(application: Application) {
 
     val exactAlarmPermission: ExactAlarmPermission = SystemExactAlarmPermission(application)
 
+    /** 后台运行（电池优化白名单）能力，用于引导用户允许后台运行。 */
+    val batteryOptimization: com.example.todolist.sys.BatteryOptimizationPermission =
+        com.example.todolist.sys.SystemBatteryOptimizationPermission(application)
+
     /** 用户设置：提醒方式、记住的提前量、是否二次确认等。 */
     val settings: SettingsStore = SharedPreferencesSettingsStore(application)
 
