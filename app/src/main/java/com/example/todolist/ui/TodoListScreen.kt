@@ -104,6 +104,17 @@ fun TodoRoute(
         },
         label = "screen",
     ) { target ->
+        if (target == Screen.FORM) {
+            // 整屏表单：字段多，需要完整高度
+            TodoFormScreen(
+                form = viewModel.form,
+                isEditing = uiState.editState.editingId != 0L,
+                onBack = viewModel::dismissForm,
+                onSubmit = viewModel::submitForm,
+            )
+            return@AnimatedContent
+        }
+
         if (target == Screen.SETTINGS) {
             SettingsScreen(
                 state = settings,
@@ -307,12 +318,7 @@ fun TodoListScreen(
         }
 
         if (uiState.editState.isOpen) {
-            TodoEditSheet(
-                form = form,
-                isEditing = uiState.editState.editingId != 0L,
-                onDismiss = onDismissForm,
-                onSubmit = onSubmitForm,
-            )
+            // 表单已改为独立整屏页面（见上面的 Screen.FORM 分支），这里不再弹对话框
         }
 
         when (val dialog = uiState.dialog) {
@@ -677,6 +683,10 @@ const val TAG_MODE_ALARM = "mode_alarm"
 const val TAG_RECURRENCE_PREFIX = "recurrence_"
 const val TAG_WEEKDAY_PREFIX = "weekday_"
 const val TAG_MONTHDAY_PREFIX = "monthday_"
+const val TAG_FORM_SCREEN = "todo_form_screen"
+const val TAG_FORM_BACK = "todo_form_back"
+const val TAG_WEEKDAYS_SUMMARY = "weekdays_summary"
+const val TAG_MONTHDAYS_SUMMARY = "monthdays_summary"
 const val TAG_SETTINGS_BUTTON = "settings_button"
 const val TAG_SETTINGS_SCREEN = "settings_screen"
 const val TAG_SETTINGS_BACK = "settings_back"

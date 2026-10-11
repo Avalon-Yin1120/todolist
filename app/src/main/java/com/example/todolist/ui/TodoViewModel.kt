@@ -33,7 +33,7 @@ import java.time.ZoneId
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
 /** 顶层界面：主界面与设置页。 */
-enum class Screen { MAIN, SETTINGS }
+enum class Screen { MAIN, SETTINGS, FORM }
 
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
@@ -80,9 +80,11 @@ data class TodoUiState(
     val tab: NavTab = NavTab.DAY,
     val selectedDate: LocalDate = LocalDate.now(),
     val grouping: ListGrouping = ListGrouping.BY_TIME,
-    /** 当前顶层界面：主界面或设置页 */
+    /** 当前顶层界面：主界面、设置页或表单页 */
     val screen: Screen = Screen.MAIN,
     val settings: SettingsUiState = SettingsUiState(),
+    /** 表单是否打开（整屏表单页），供界面判断是否需要初始聚焦等行为 */
+    val formOpen: Boolean = false,
     /** 周期待办「仅修改本次」时的场次时间。 */
     val pendingOccurrenceStart: Long = 0L,
     /** 正在处理的重复待办原始副本，供「仅修改本次」构造独立记录。 */
@@ -142,7 +144,8 @@ class TodoViewModel(
             tab = local.tab,
             selectedDate = local.selectedDate,
             grouping = local.grouping,
-            screen = local.screen,
+            screen = if (edit.isOpen) Screen.FORM else local.screen,
+            formOpen = edit.isOpen,
             settings = local.settings,
             pendingOccurrenceStart = local.pendingOccurrenceStart,
             pendingRecurringTodo = local.pendingRecurringTodo,

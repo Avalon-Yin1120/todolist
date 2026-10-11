@@ -25,6 +25,7 @@ import com.example.todolist.ui.TAG_ADD_FAB
 import com.example.todolist.ui.TAG_CANCEL_DELETE
 import com.example.todolist.ui.TAG_CONFIRM_DELETE
 import com.example.todolist.ui.TAG_COUNTDOWN
+import com.example.todolist.ui.TAG_FORM_SCREEN
 import com.example.todolist.ui.TAG_MODE_ALARM
 import com.example.todolist.ui.TAG_MODE_NOTIFICATION
 import com.example.todolist.ui.TAG_MONTHDAY_PREFIX
@@ -115,6 +116,17 @@ class TodoListUiTest {
             .targetContext.applicationContext
         val graph = (application as TodoApp).requireGraph()
         return runBlocking { graph.repository.findAll().map { it.id }.toSet() }
+    }
+
+    /**
+     * 把整屏表单向下滚一段。
+     *
+     * 用语义滚动动作而不是注入触摸：Compose 只为视口内的内容建立语义节点，
+     * 而 performScrollTo 会先滚动祖先容器把目标节点带进视口。
+     */
+    private fun scrollFormDown() {
+        composeRule.onNodeWithTag(TAG_RECURRENCE_PREFIX + "NONE").performScrollTo()
+        composeRule.waitForIdle()
     }
 
     /** 读取某条待办的完整记录，用于断言周期规则是否被正确保存。 */
@@ -327,6 +339,35 @@ class TodoListUiTest {
         composeRule.onAllNodesWithText("未开始")[0].assertExists()
     }
 
+    fun 选择每月后可以精确勾选几号() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.onNodeWithTag(TAG_NAME_FIELD).performTextInput(unique("月结"))
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TAG_RECURRENCE_PREFIX + "MONTHLY").performClick()
+        composeRule.waitForIdle()
+
+        // 号数按钮在表单下方，先滚动过去
+        scrollFormDown()
+
+        // 勾上 1 号与 15 号
+        composeRule.onNodeWithTag(TAG_MONTHDAY_PREFIX + "1").performClick()
+        composeRule.onNodeWithTag(TAG_MONTHDAY_PREFIX + "15").performClick()
+        composeRule.waitForIdle()
+
+        val before = currentTodoIds()
+        composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
+        composeRule.waitForIdle()
+        val id = (currentTodoIds() - before).single()
+        val todo = currentTodo(id)
+        org.junit.Assert.assertEquals("MONTHLY", todo.recurrence.name)
+        org.junit.Assert.assertTrue(
+            "应包含 1 号与 15 号，实际=${todo.monthDays}",
+            todo.monthDays.containsAll(listOf(1, 15)),
+        )
+    }
+
+    @Test
     fun 删除待办会先弹确认框() {
         val id = addTodo(unique("待删除"))
 
