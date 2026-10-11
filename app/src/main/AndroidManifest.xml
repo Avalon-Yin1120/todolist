@@ -7,6 +7,12 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- 开机后重新排定未完成的提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 闹钟式提醒：全屏 Intent 在锁屏上直接弹出提醒页 -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- 提醒时点亮屏幕并保持常亮 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 提醒时振动 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".TodoApp"
@@ -27,6 +33,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 闹钟式提醒页：由通知的全屏 Intent 拉起，需能在锁屏上显示并点亮屏幕 -->
+        <activity
+            android:name=".ui.alarm.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showOnLockScreen="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.Todolist" />
 
         <!-- 精确闹钟到点回调 -->
         <receiver

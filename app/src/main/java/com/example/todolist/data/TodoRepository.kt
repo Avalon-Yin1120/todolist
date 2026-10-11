@@ -30,5 +30,20 @@ class TodoRepository(private val dao: TodoDao) {
 
     suspend fun deleteById(id: Long) = dao.deleteById(id)
 
-    suspend fun markNotified(id: Long, at: Long) = dao.markNotified(id, at)
+    /** 标记「哪一场已经提醒过」。 */
+    suspend fun markReminded(id: Long, occurrenceStart: Long) = dao.markReminded(id, occurrenceStart)
+
+    /**
+     * 与给定时间段重叠的未完成待办（可排除自己）。
+     *
+     * 用于「新建时该时段已有其它待办」的提示：按需求仍然允许创建，只是提醒用户。
+     */
+    suspend fun findOverlapping(startAt: Long, endAt: Long, excludeId: Long = 0L): List<Todo> =
+        dao.findOverlapping(startAt, endAt)
+            .map { it.toDomain() }
+            .filter { it.id != excludeId }
+
+    /** 由「仅修改本次」派生的独立待办。 */
+    suspend fun findChildren(parentId: Long): List<Todo> =
+        dao.findChildren(parentId).map { it.toDomain() }
 }

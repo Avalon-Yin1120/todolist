@@ -18,7 +18,20 @@ import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import com.example.todolist.ui.TAG_ADD_FAB
-import com.example.todolist.ui.TAG_EXACT_SWITCH
+import com.example.todolist.ui.TAG_CANCEL_DELETE
+import com.example.todolist.ui.TAG_CONFIRM_DELETE
+import com.example.todolist.ui.TAG_COUNTDOWN
+import com.example.todolist.ui.TAG_MODE_ALARM
+import com.example.todolist.ui.TAG_SETTINGS_BUTTON
+import com.example.todolist.ui.TAG_SETTINGS_CLOSE
+import com.example.todolist.ui.TAG_SETTING_ALARM
+import com.example.todolist.ui.TAG_SWIPE_AREA
+import com.example.todolist.ui.TAG_TAB_DAY
+import com.example.todolist.ui.TAG_TAB_MONTH
+import com.example.todolist.ui.TAG_TAB_TODO
+import com.example.todolist.ui.TAG_TAB_WEEK
+import com.example.todolist.ui.TAG_TITLE
+import com.example.todolist.ui.TAG_TODO_DELETE
 import com.example.todolist.ui.TAG_LEAD_FIELD
 import com.example.todolist.ui.TAG_NAME_FIELD
 import com.example.todolist.ui.TAG_SAVE_BUTTON
@@ -219,23 +232,101 @@ class TodoListUiTest {
     }
 
     @Test
-    fun 打开精确闹钟开关后策略徽章随之更新() {
-        val name = unique("精确验证")
+    fun 选择闹钟式提醒后徽章随之更新() {
+        val name = unique("闹钟验证")
         composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
         composeRule.onNodeWithTag(TAG_NAME_FIELD).performTextInput(name)
         composeRule.waitForIdle()
 
-        // 默认走普通通知策略
-        composeRule.onNodeWithText("（普通通知）", substring = true).assertIsDisplayed()
+        // 默认是通知方式
+        composeRule.onNodeWithText("（通知）", substring = true).assertIsDisplayed()
 
-        // 打开「使用精确闹钟」，预览文案应切换
-        composeRule.onAllNodesWithTag(TAG_EXACT_SWITCH)[0].performClick()
+        // 切成闹钟式
+        composeRule.onNodeWithTag(TAG_MODE_ALARM).performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("（精确闹钟）", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("（闹钟式）", substring = true).assertIsDisplayed()
 
-        // 保存后该行的徽章应为精确策略
+        // 保存后列表项出现「闹钟」徽章
         composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
         composeRule.waitForIdle()
-        composeRule.onAllNodesWithText("准点·精确")[0].assertIsDisplayed()
+        composeRule.onAllNodesWithText("闹钟")[0].assertIsDisplayed()
+    }
+
+    @Test
+    fun 未来时段的待办不给勾选框() {
+        // 默认起始时间是下一个整点，提醒量默认 0，因此属于「未来」
+        val name = unique("未来事项")
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.onNodeWithTag(TAG_NAME_FIELD).performTextInput(name)
+        composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
+        composeRule.waitForIdle()
+
+        // 未来的待办不能标记完成：应显示「未开始」而不是勾选框
+        composeRule.onAllNodesWithText("未开始")[0].assertIsDisplayed()
+    }
+
+    @Test
+    fun 删除待办会先弹确认框() {
+        val id = addTodo(unique("待删除"))
+
+        composeRule.onNodeWithTag(tagForTodo(TAG_TODO_DELETE, id)).performClick()
+        composeRule.waitForIdle()
+
+        // 出现确认框
+        composeRule.onNodeWithText("删除待办").assertIsDisplayed()
+        // 取消后待办仍在
+        composeRule.onNodeWithTag(TAG_CANCEL_DELETE).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(tagForTodo(TAG_TODO_ROW, id)).assertIsDisplayed()
+    }
+
+    @Test
+    fun 确认后删除待办() {
+        val id = addTodo(unique("确认删除"))
+
+        composeRule.onNodeWithTag(tagForTodo(TAG_TODO_DELETE, id)).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_CONFIRM_DELETE).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(tagForTodo(TAG_TODO_ROW, id)).assertDoesNotExist()
+    }
+
+    @Test
+    fun 底部四个视图可以切换() {
+        composeRule.onNodeWithTag(TAG_TAB_DAY).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
+
+        composeRule.onNodeWithTag(TAG_TAB_WEEK).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
+
+        composeRule.onNodeWithTag(TAG_TAB_MONTH).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
+
+        composeRule.onNodeWithTag(TAG_TAB_TODO).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_ADD_FAB).assertIsDisplayed()
+    }
+
+    @Test
+    fun 顶部显示倒计时与设置入口() {
+        composeRule.onNodeWithTag(TAG_TITLE).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_COUNTDOWN).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_SETTINGS_BUTTON).assertIsDisplayed()
+    }
+
+    @Test
+    fun 设置页可以打开并关闭() {
+        composeRule.onNodeWithTag(TAG_SETTINGS_BUTTON).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("设置").assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_SETTING_ALARM).assertIsDisplayed()
+
+        composeRule.onNodeWithTag(TAG_SETTINGS_CLOSE).performClick()
+        composeRule.waitForIdle()
     }
 }

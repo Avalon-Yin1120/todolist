@@ -20,11 +20,12 @@ class ReminderWorker(
     override fun doWork(): Result {
         val todoId = inputData.getLong(KEY_TODO_ID, -1L)
         if (todoId <= 0L) return Result.failure()
+        val occurrenceStart = inputData.getLong(KEY_OCCURRENCE_START, 0L)
 
         val app = applicationContext as? TodoApp ?: return Result.retry()
         val handler = app.graphOrNull()?.fireHandler ?: return Result.retry()
         return try {
-            runBlocking { handler.fire(todoId) }
+            runBlocking { handler.fire(todoId, occurrenceStart) }
             Result.success()
         } catch (_: Exception) {
             Result.retry()
@@ -33,5 +34,6 @@ class ReminderWorker(
 
     companion object {
         const val KEY_TODO_ID = "todo_id"
+        const val KEY_OCCURRENCE_START = "occurrence_start"
     }
 }

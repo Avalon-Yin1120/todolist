@@ -8,19 +8,31 @@ import androidx.lifecycle.viewModelScope
 import com.example.todolist.AppGraph
 import com.example.todolist.TodoApp
 import com.example.todolist.requireGraph
+import com.example.todolist.data.SettingsStore
 import com.example.todolist.data.TodoDraft
 import com.example.todolist.data.TodoRepository
-import com.example.todolist.data.toTodo
 import com.example.todolist.domain.Clock
 import com.example.todolist.domain.FormError
+import com.example.todolist.domain.Recurrence
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
 import com.example.todolist.reminder.SchedulingCoordinator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneId
+
+/** 底部导航的视图。 */
+enum class NavTab { TODO, DAY, WEEK, MONTH }
+
+/** 列表内的分组方式。 */
+enum class ListGrouping { BY_TIME, BY_DONE }
 
 /** 编辑表单是否打开。 */
 data class EditState(
@@ -28,16 +40,29 @@ data class EditState(
     val editingId: Long = 0L,
 )
 
-/** 一次性提示（降级、权限变化、保存成功）。 */
+/** 需要用户确认或注意的一次性交互。 */
+sealed interface DialogRequest {
+    /** 删除前二次确认。 */
+    data class ConfirmDelete(val todoId: Long) : DialogRequest
+
+    /** 重复待办：只改本次 / 改整个系列。 */
+    data class RecurrenceScope(val todoId: Long, val action: RecurrenceAction) : DialogRequest
+}
+
+/** 待办操作的类型（用于「本次 / 整个」选择）。 */
+enum class RecurrenceAction { EDIT, DELETE }
+
+/** 一次性提示。 */
 sealed interface Notice {
-    /** 精确闹钟不可用，已自动降级为普通通知。 */
     data object ExactAlarmDegraded : Notice
-
-    /** 精确闹钟权限被撤销。 */
     data object ExactAlarmPermissionRevoked : Notice
-
-    /** 待办已保存。 */
     data object Saved : Notice
+
+    /** 该时间段已有其它待办：仍然创建成功，只是提示。 */
+    data class OverlapWarning(val others: List<String>) : Notice
+
+    /** 重复待办只删了本次。 */
+    data object OccurrenceSkipped : Notice
 }
 
 /** 列表页的集合状态。 */
@@ -46,6 +71,16 @@ data class TodoUiState(
     val editState: EditState = EditState(),
     val canScheduleExact: Boolean = true,
     val notice: Notice? = null,
+    val dialog: DialogRequest? = null,
+    val tab: NavTab = NavTab.TODO,
+    val selectedDate: LocalDate = LocalDate.now(),
+    val grouping: ListGrouping = ListGrouping.BY_TIME,
+    val settingsOpen: Boolean = false,
+    val settings: SettingsUiState = SettingsUiState(),
+    /** 周期待办「仅修改本次」时的场次时间。 */
+    val pendingOccurrenceStart: Long = 0L,
+    /** 正在处理的重复待办原始副本，供「仅修改本次」构造独立记录。 */
+    val pendingRecurringTodo: Todo? = null,
 )
 
 /** 把校验错误枚举翻译成用户可见文案。 */
@@ -57,43 +92,94 @@ fun messageOf(error: FormError): String = when (error) {
 }
 
 /**
- * 列表页 ViewModel。
+ * 主界面 ViewModel。
  *
  * 依赖全部从构造函数注入，因此可以在测试里直接 new 出来并替换任意一层。
+ * 视图状态用一个内部 [LocalState] 聚合，避免五六个独立 StateFlow 的组合爆炸。
  */
 class TodoViewModel(
     application: Application,
     private val repository: TodoRepository,
     private val coordinator: SchedulingCoordinator,
+    private val settings: SettingsStore,
     private val clock: Clock,
     private val canScheduleExactAlarms: () -> Boolean,
+    private val zone: ZoneId = ZoneId.systemDefault(),
 ) : AndroidViewModel(application) {
 
     /** 表单状态独立于列表状态，避免列表刷新打断用户输入。 */
-    val form = DraftFormStateHolder(clock)
+    val form = DraftFormStateHolder(
+        clock = clock,
+        rememberedLeadMinutes = { settings.lastLeadMinutes },
+        defaultMode = {
+            if (settings.useAlarmForReminders) ReminderMode.ALARM else ReminderMode.NOTIFICATION
+        },
+    )
 
     private val editState = MutableStateFlow(EditState())
 
-    private data class PermissionState(val granted: Boolean, val notice: Notice?)
-
-    private val permissionState = MutableStateFlow(
-        PermissionState(canScheduleExactAlarms(), null)
+    private val localState = MutableStateFlow(
+        LocalState(canScheduleExact = canScheduleExactAlarms(), settings = readSettings())
     )
+
+    /** 每秒推进一次，用于倒计时与时段颜色自动更新。 */
+    private val ticker = MutableStateFlow(clock.now())
 
     val uiState: StateFlow<TodoUiState> = combine(
         repository.observeAll(),
         editState,
-        permissionState,
-    ) { todos, edit, permission ->
+        localState,
+        ticker,
+    ) { todos, edit, local, _ ->
         TodoUiState(
             todos = todos,
             editState = edit,
-            canScheduleExact = permission.granted,
-            notice = permission.notice,
+            canScheduleExact = local.canScheduleExact,
+            notice = local.notice,
+            dialog = local.dialog,
+            tab = local.tab,
+            selectedDate = local.selectedDate,
+            grouping = local.grouping,
+            settingsOpen = local.settingsOpen,
+            settings = local.settings,
+            pendingOccurrenceStart = local.pendingOccurrenceStart,
+            pendingRecurringTodo = local.pendingRecurringTodo,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, TodoUiState())
 
-    // ---------------------------------------------------------------- 表单开关
+    init {
+        viewModelScope.launch {
+            while (isActive) {
+                ticker.value = clock.now()
+                delay(TICK_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** 当前时刻（用于倒计时与时段判定）。 */
+    fun now(): Long = ticker.value
+
+    /** 当前时区。 */
+    fun zone(): ZoneId = zone
+
+    // ---------------------------------------------------------------- 导航
+
+    fun selectTab(tab: NavTab) = updateLocal { it.copy(tab = tab) }
+
+    /** 点某一天：跳到日视图。 */
+    fun selectDate(date: LocalDate) =
+        updateLocal { it.copy(selectedDate = date, tab = NavTab.DAY) }
+
+    /** 左右滑动切换：日视图 ±1 天，周视图 ±7 天。 */
+    fun shiftDate(days: Long) = updateLocal { it.copy(selectedDate = it.selectedDate.plusDays(days)) }
+
+    /** 月视图翻月。 */
+    fun shiftMonth(months: Long) =
+        updateLocal { it.copy(selectedDate = it.selectedDate.plusMonths(months)) }
+
+    fun setGrouping(grouping: ListGrouping) = updateLocal { it.copy(grouping = grouping) }
+
+    // ---------------------------------------------------------------- 表单
 
     fun openCreateForm() {
         form.open()
@@ -101,87 +187,213 @@ class TodoViewModel(
     }
 
     fun openEditForm(todo: Todo) {
+        if (todo.recurrence.isRecurring) {
+            // 重复待办的编辑需要先问清作用范围
+            updateLocal {
+                it.copy(
+                    dialog = DialogRequest.RecurrenceScope(todo.id, RecurrenceAction.EDIT),
+                    pendingRecurringTodo = todo,
+                    pendingOccurrenceStart = todo.startAt,
+                )
+            }
+            return
+        }
+        openEditFormDirect(todo)
+    }
+
+    /** 直接打开编辑表单（不询问作用范围）。 */
+    fun openEditFormDirect(todo: Todo) {
         form.open(
             id = todo.id,
             name = todo.name,
             startAt = todo.startAt,
             endAt = todo.endAt,
             leadMinutes = todo.leadMinutes,
-            useExactAlarm = todo.useExactAlarm,
+            mode = todo.mode,
+            recurrence = todo.recurrence,
         )
         editState.value = EditState(isOpen = true, editingId = todo.id)
     }
 
     fun dismissForm() {
         editState.value = EditState()
+        updateLocal { it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L) }
     }
 
-    // ---------------------------------------------------------------- 增删改
-
-    /** 保存表单；校验不通过时只更新错误状态。 */
+    /** 保存表单。 */
     fun submitForm() {
-        val errors = form.validate()
-        if (errors.isNotEmpty()) return
+        if (form.validate().isNotEmpty()) return
 
+        val draft = form.toDraft()
         viewModelScope.launch {
-            val hadExactPermission = canScheduleExactAlarms()
-            saveDraft(form.toDraft())
-            val degraded = !hadExactPermission &&
-                !form.state.value.useExactAlarm.not()
-            setNotice(
-                when {
-                    degraded && !hadExactPermission -> Notice.ExactAlarmDegraded
-                    else -> Notice.Saved
+            // 记住这次的提前量，下次新建时作为默认值
+            settings.lastLeadMinutes = draft.leadMinutes
+
+            val result = if (draft.id == 0L) {
+                coordinator.create(draft)
+            } else {
+                coordinator.update(draft)
+            }
+            if (result != null) {
+                if (result.overlapping.isNotEmpty() && settings.warnOnOverlap) {
+                    notify(Notice.OverlapWarning(result.overlapping.map { it.name }.take(3)))
+                } else {
+                    notify(Notice.Saved)
                 }
-            )
+            }
             dismissForm()
         }
     }
 
-    private suspend fun saveDraft(draft: TodoDraft) {
-        val now = clock.now()
-        if (draft.id == 0L) {
-            coordinator.create(draft.toTodo(existing = null, now = now))
+    // ---------------------------------------------------------------- 删除
+
+    /** 点击删除：按设置决定是否先确认；重复待办先问作用范围。 */
+    fun requestDelete(todo: Todo) {
+        if (todo.recurrence.isRecurring) {
+            updateLocal {
+                it.copy(
+                    dialog = DialogRequest.RecurrenceScope(todo.id, RecurrenceAction.DELETE),
+                    pendingRecurringTodo = todo,
+                    pendingOccurrenceStart = todo.startAt,
+                )
+            }
+            return
+        }
+        if (settings.confirmBeforeDelete) {
+            updateLocal { it.copy(dialog = DialogRequest.ConfirmDelete(todo.id)) }
         } else {
-            val existing = coordinator.findById(draft.id) ?: return
-            coordinator.update(draft.toTodo(existing = existing, now = now))
+            confirmDelete(todo.id)
         }
     }
 
-    fun delete(todoId: Long) {
+    /** 用户在确认框里点了「删除」。 */
+    fun confirmDelete(todoId: Long) {
+        updateLocal { it.copy(dialog = null) }
         viewModelScope.launch {
             coordinator.delete(todoId)
             if (editState.value.editingId == todoId) dismissForm()
         }
     }
 
+    /**
+     * 处理重复待办的作用范围选择。
+     *
+     * * 整个系列：编辑时改规则；删除时删规则（含派生场次）。
+     * * 仅本次：编辑时把这一次单独落成一条待办（parentId 指向原规则），
+     *   并在原规则对应日期记一条例外；删除时只记一条 SKIPPED 例外。
+     */
+    fun resolveRecurrenceScope(entireSeries: Boolean) {
+        val local = localState.value
+        val todo = local.pendingRecurringTodo
+        val action = (local.dialog as? DialogRequest.RecurrenceScope)?.action
+        updateLocal { it.copy(dialog = null) }
+        if (todo == null || action == null) return
+
+        when (action) {
+            RecurrenceAction.DELETE -> viewModelScope.launch {
+                if (entireSeries) {
+                    coordinator.delete(todo.id)
+                } else {
+                    coordinator.skipOccurrence(todo.id, local.pendingOccurrenceStart)
+                    notify(Notice.OccurrenceSkipped)
+                }
+                updateLocal { it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L) }
+            }
+
+            RecurrenceAction.EDIT -> {
+                if (entireSeries) {
+                    openEditFormDirect(todo)
+                } else {
+                    viewModelScope.launch {
+                        // 把这一次落成独立待办：复制一份、清掉周期、指向原规则
+                        val duration = todo.endAt - todo.startAt
+                        val result = coordinator.create(
+                            TodoDraft(
+                                name = todo.name,
+                                startAt = local.pendingOccurrenceStart,
+                                endAt = local.pendingOccurrenceStart + duration,
+                                leadMinutes = todo.leadMinutes,
+                                mode = todo.mode,
+                                recurrence = Recurrence.NONE,
+                            )
+                        )
+                        // 原规则上把这一天标为例外，避免同一天出现两条
+                        coordinator.skipOccurrence(todo.id, local.pendingOccurrenceStart)
+                        updateLocal { it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L) }
+                        coordinator.findById(result.todoId)?.let { openEditFormDirect(it) }
+                    }
+                }
+            }
+        }
+    }
+
+    fun dismissDialog() = updateLocal { it.copy(dialog = null) }
+
     fun toggleDone(todo: Todo) {
         viewModelScope.launch { coordinator.setDone(todo.id, !todo.isDone) }
     }
 
-    // ---------------------------------------------------------------- 权限
+    // ---------------------------------------------------------------- 设置
+
+    fun openSettings() = updateLocal { it.copy(settingsOpen = true) }
+
+    fun closeSettings() = updateLocal { it.copy(settingsOpen = false) }
+
+    fun changeSetting(change: SettingsChange) {
+        when (change) {
+            is SettingsChange.UseAlarm -> settings.useAlarmForReminders = change.value
+            is SettingsChange.ConfirmDelete -> settings.confirmBeforeDelete = change.value
+            is SettingsChange.WarnOverlap -> settings.warnOnOverlap = change.value
+        }
+        updateLocal { it.copy(settings = readSettings()) }
+    }
+
+    private fun readSettings() = SettingsUiState(
+        useAlarmForReminders = settings.useAlarmForReminders,
+        confirmBeforeDelete = settings.confirmBeforeDelete,
+        warnOnOverlap = settings.warnOnOverlap,
+        lastLeadMinutes = settings.lastLeadMinutes,
+    )
+
+    // ---------------------------------------------------------------- 权限与提示
 
     /** 从系统设置返回后刷新精确闹钟权限状态。 */
     fun refreshPermissions() {
         val granted = canScheduleExactAlarms()
-        val previous = permissionState.value
-        val notice = if (previous.granted && !granted) {
+        val previous = localState.value.canScheduleExact
+        val notice = if (previous && !granted) {
             Notice.ExactAlarmPermissionRevoked
         } else {
-            previous.notice
+            localState.value.notice
         }
-        permissionState.value = PermissionState(granted, notice)
+        updateLocal { it.copy(canScheduleExact = granted, notice = notice) }
     }
 
-    fun consumeNotice() {
-        setNotice(null)
+    fun consumeNotice() = updateLocal { it.copy(notice = null) }
+
+    private fun notify(notice: Notice) = updateLocal { it.copy(notice = notice) }
+
+    private fun updateLocal(transform: (LocalState) -> LocalState) {
+        localState.value = transform(localState.value)
     }
 
-    private fun setNotice(notice: Notice?) {
-        permissionState.value = permissionState.value.copy(notice = notice)
-    }
+    /** 视图状态的内部聚合；放在内部是为了不给外部暴露可变入口。 */
+    private data class LocalState(
+        val canScheduleExact: Boolean,
+        val settings: SettingsUiState,
+        val notice: Notice? = null,
+        val dialog: DialogRequest? = null,
+        val tab: NavTab = NavTab.TODO,
+        val selectedDate: LocalDate = LocalDate.now(),
+        val grouping: ListGrouping = ListGrouping.BY_TIME,
+        val settingsOpen: Boolean = false,
+        val pendingOccurrenceStart: Long = 0L,
+        val pendingRecurringTodo: Todo? = null,
+    )
 
     companion object {
+        private const val TICK_INTERVAL_MS = 1_000L
+
         /** 生产装配：从应用依赖图取依赖。 */
         fun factory(application: Application): ViewModelProvider.Factory {
             val todoApp = application as? TodoApp
@@ -194,6 +406,7 @@ class TodoViewModel(
                         application = application,
                         repository = graph.repository,
                         coordinator = graph.coordinator,
+                        settings = graph.settings,
                         clock = graph.clock,
                         canScheduleExactAlarms = {
                             graph.exactAlarmPermission.canScheduleExactAlarms()

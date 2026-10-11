@@ -3,6 +3,8 @@ package com.example.todolist.ui
 import com.example.todolist.domain.Clock
 import com.example.todolist.domain.FormError
 import com.example.todolist.domain.FormValidator
+import com.example.todolist.domain.Recurrence
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderTime
 import com.example.todolist.data.TodoDraft
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +28,10 @@ data class DraftFormState(
     val leadInput: String = "",
     /** 用户输入的提前量非法（非空但解析失败或超出范围）。 */
     val leadInputInvalid: Boolean = false,
-    val useExactAlarm: Boolean = false,
+    /** 提醒方式：通知 / 闹钟式。 */
+    val mode: ReminderMode = ReminderMode.NOTIFICATION,
+    /** 周期规则。 */
+    val recurrence: Recurrence = Recurrence.NONE,
 ) {
     /** 提前量的可读描述，例如「提前 30 分钟」。 */
     val leadLabel: String
@@ -52,6 +57,8 @@ class DraftFormStateHolder(
      * 没填过则回落到 [FALLBACK_LEAD_MINUTES]。
      */
     private val rememberedLeadMinutes: () -> Int = { FALLBACK_LEAD_MINUTES },
+    /** 用户此前选择的提醒方式，作为新建待办时的默认值。 */
+    private val defaultMode: () -> ReminderMode = { ReminderMode.NOTIFICATION },
 ) {
 
     private val _state = MutableStateFlow(DraftFormState())
@@ -64,6 +71,7 @@ class DraftFormStateHolder(
      * 打开表单。
      *
      * @param leadMinutes 传 null 表示「用记住的默认提前量」；编辑已有项时传具体值。
+     * @param mode 传 null 表示「用设置里的默认提醒方式」。
      */
     fun open(
         id: Long = 0L,
@@ -71,7 +79,8 @@ class DraftFormStateHolder(
         startAt: Long? = null,
         endAt: Long? = null,
         leadMinutes: Int? = null,
-        useExactAlarm: Boolean = false,
+        mode: ReminderMode? = null,
+        recurrence: Recurrence = Recurrence.NONE,
     ) {
         val start = startAt ?: defaultStartAtProvider(clock.now())
         val lead = leadMinutes ?: rememberedLeadMinutes().coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
@@ -82,7 +91,8 @@ class DraftFormStateHolder(
             endAt = endAt ?: (start + DEFAULT_DURATION_MS),
             leadMinutes = lead,
             leadInput = lead.toEditableLeadInput(),
-            useExactAlarm = useExactAlarm,
+            mode = mode ?: defaultMode(),
+            recurrence = recurrence,
         )
         _errors.value = emptyMap()
     }
@@ -135,8 +145,12 @@ class DraftFormStateHolder(
         clearError(FormValidator.FIELD_LEAD)
     }
 
-    fun setUseExactAlarm(value: Boolean) {
-        _state.value = _state.value.copy(useExactAlarm = value)
+    fun setMode(value: ReminderMode) {
+        _state.value = _state.value.copy(mode = value)
+    }
+
+    fun setRecurrence(value: Recurrence) {
+        _state.value = _state.value.copy(recurrence = value)
     }
 
     /** 校验当前表单；返回空 map 表示通过。 */
@@ -162,7 +176,8 @@ class DraftFormStateHolder(
             startAt = requireNotNull(current.startAt) { "起始时间未选择" },
             endAt = requireNotNull(current.endAt) { "终止时间未选择" },
             leadMinutes = current.leadMinutes,
-            useExactAlarm = current.useExactAlarm,
+            mode = current.mode,
+            recurrence = current.recurrence,
         )
     }
 

@@ -27,6 +27,11 @@ class FakeTodoDao : TodoDao {
 
     override suspend fun findAll(): List<TodoEntity> = state.value.values.toList()
 
+    override suspend fun findOverlapping(startAt: Long, endAt: Long): List<TodoEntity> =
+        state.value.values
+            .filter { it.startAt < endAt && it.endAt > startAt && !it.isDone }
+            .sortedBy { it.startAt }
+
     override suspend fun insert(entity: TodoEntity): Long {
         val id = if (entity.id == 0L) nextId++ else entity.id
         state.value = state.value + (id to entity.copy(id = id))
@@ -49,9 +54,12 @@ class FakeTodoDao : TodoDao {
         writeLog += "deleteById($id)"
     }
 
-    override suspend fun markNotified(id: Long, notifiedAt: Long) {
+    override suspend fun markReminded(id: Long, occurrenceStart: Long) {
         val entity = state.value[id] ?: return
-        state.value = state.value + (id to entity.copy(notifiedAt = notifiedAt))
-        writeLog += "markNotified($id)"
+        state.value = state.value + (id to entity.copy(remindedOccurrenceStart = occurrenceStart))
+        writeLog += "markReminded($id)"
     }
+
+    override suspend fun findChildren(parentId: Long): List<TodoEntity> =
+        state.value.values.filter { it.parentId == parentId }
 }

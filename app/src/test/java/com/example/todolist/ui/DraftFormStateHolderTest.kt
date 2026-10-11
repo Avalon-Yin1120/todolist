@@ -1,5 +1,6 @@
 package com.example.todolist.ui
 
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.FormError
 import com.example.todolist.domain.FormValidator
 import com.example.todolist.testing.FakeClock
@@ -30,7 +31,7 @@ class DraftFormStateHolderTest {
         assertThat(form.state.value.startAt).isEqualTo(now + 60 * TestData.MINUTE)
         assertThat(form.state.value.endAt).isEqualTo(now + 120 * TestData.MINUTE)
         assertThat(form.state.value.leadMinutes).isEqualTo(0)
-        assertThat(form.state.value.useExactAlarm).isFalse()
+        assertThat(form.state.value.mode).isEqualTo(ReminderMode.NOTIFICATION)
     }
 
     @Test
@@ -60,7 +61,7 @@ class DraftFormStateHolderTest {
             startAt = now + 10 * TestData.MINUTE,
             endAt = now + 40 * TestData.MINUTE,
             leadMinutes = 15,
-            useExactAlarm = true,
+            mode = ReminderMode.ALARM,
         )
 
         assertThat(form.state.value).isEqualTo(
@@ -71,7 +72,7 @@ class DraftFormStateHolderTest {
                 endAt = now + 40 * TestData.MINUTE,
                 leadMinutes = 15,
                 leadInput = "15",
-                useExactAlarm = true,
+                mode = ReminderMode.ALARM,
             )
         )
     }
@@ -199,14 +200,14 @@ class DraftFormStateHolderTest {
         form.open()
         form.setName("  小组会议  ")
         form.setLeadMinutes(30)
-        form.setUseExactAlarm(true)
+        form.setMode(ReminderMode.ALARM)
 
         assertThat(form.validate()).isEmpty()
 
         val draft = form.toDraft()
         assertThat(draft.name).isEqualTo("小组会议")   // 已 trim
         assertThat(draft.leadMinutes).isEqualTo(30)
-        assertThat(draft.useExactAlarm).isTrue()
+        assertThat(draft.mode).isEqualTo(ReminderMode.ALARM)
     }
 
     @Test

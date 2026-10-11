@@ -1,8 +1,11 @@
 package com.example.todolist.testing
 
 import com.example.todolist.domain.Clock
-import com.example.todolist.domain.SystemClock
+import com.example.todolist.domain.Recurrence
+import com.example.todolist.domain.RecurrenceException
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
+import java.time.ZoneId
 
 /** 测试数据工厂，集中时间常量避免各测试各写一遍。 */
 object TestData {
@@ -12,7 +15,10 @@ object TestData {
     /** 固定「现在」：2025-01-15 10:00:00 UTC。 */
     const val NOW = 1_736_935_200_000L
 
-    fun clock(now: Long = NOW): Clock = SystemClock().let { FakeClock(now) }
+    /** 测试固定时区，避免依赖机器时区。 */
+    val ZONE: ZoneId = ZoneId.of("Asia/Shanghai")
+
+    fun clock(now: Long = NOW): Clock = FakeClock(now)
 
     fun todo(
         id: Long = 1L,
@@ -20,18 +26,24 @@ object TestData {
         startAt: Long = NOW + 60 * MINUTE,
         endAt: Long = NOW + 120 * MINUTE,
         leadMinutes: Int = 0,
-        useExactAlarm: Boolean = false,
+        mode: ReminderMode = ReminderMode.NOTIFICATION,
+        recurrence: Recurrence = Recurrence.NONE,
+        recurrenceExceptions: List<RecurrenceException> = emptyList(),
+        parentId: Long? = null,
         isDone: Boolean = false,
-        notifiedAt: Long? = null,
+        remindedOccurrenceStart: Long? = null,
     ): Todo = Todo(
         id = id,
         name = name,
         startAt = startAt,
         endAt = endAt,
         leadMinutes = leadMinutes,
-        useExactAlarm = useExactAlarm,
+        mode = mode,
+        recurrence = recurrence,
+        recurrenceExceptions = recurrenceExceptions,
+        parentId = parentId,
         isDone = isDone,
-        notifiedAt = notifiedAt,
+        remindedOccurrenceStart = remindedOccurrenceStart,
         createdAt = NOW,
         updatedAt = NOW,
     )

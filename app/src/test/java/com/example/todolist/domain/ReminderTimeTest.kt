@@ -1,5 +1,6 @@
 package com.example.todolist.domain
 
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.testing.TestData
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
@@ -77,7 +78,9 @@ class ReminderTimeTest {
         val now = TestData.NOW
         val base = TestData.todo()
         assertThat(ReminderTime.shouldSchedule(base, now)).isTrue()
-        assertThat(ReminderTime.shouldSchedule(base.copy(notifiedAt = now), now)).isFalse()
+        assertThat(
+            ReminderTime.shouldSchedule(base.copy(remindedOccurrenceStart = base.startAt), now)
+        ).isFalse()
     }
 
     @Test
@@ -121,10 +124,10 @@ class ReminderTimeTest {
     }
 
     @Test
-    fun `策略由精确开关决定`() {
-        assertThat(TestData.todo(useExactAlarm = true).toReminderPlan().strategy)
+    fun `策略由提醒方式决定`() {
+        assertThat(TestData.todo(mode = ReminderMode.ALARM).toReminderPlan().strategy)
             .isEqualTo(ReminderStrategy.EXACT_ALARM)
-        assertThat(TestData.todo(useExactAlarm = false).toReminderPlan().strategy)
+        assertThat(TestData.todo(mode = ReminderMode.NOTIFICATION).toReminderPlan().strategy)
             .isEqualTo(ReminderStrategy.NOTIFICATION)
     }
 }

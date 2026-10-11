@@ -3,6 +3,10 @@ package com.example.todolist.data
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.todolist.data.local.TodoDatabase
+import com.example.todolist.domain.Recurrence
+import com.example.todolist.domain.RecurrenceException
+import com.example.todolist.domain.RecurrenceExceptionKind
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.testing.TestData
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.flow.first
@@ -43,25 +47,25 @@ class TodoRepositoryTest {
         name: String = "小组会议",
         startAt: Long = now + 60 * TestData.MINUTE,
         leadMinutes: Int = 0,
-        useExactAlarm: Boolean = false,
+        mode: ReminderMode = ReminderMode.NOTIFICATION,
     ) = TodoDraft(
         name = name,
         startAt = startAt,
         endAt = startAt + 60 * TestData.MINUTE,
         leadMinutes = leadMinutes,
-        useExactAlarm = useExactAlarm,
+        mode = mode,
     ).toTodo(existing = null, now = now)
 
     @Test
     fun `新增后可以按 id 查回且字段完整`() = runTest {
-        val id = repository.insert(newTodo(name = "周会", leadMinutes = 15, useExactAlarm = true))
+        val id = repository.insert(newTodo(name = "周会", leadMinutes = 15, mode = ReminderMode.ALARM))
 
         val loaded = repository.findById(id)
         assertThat(loaded).isNotNull()
         assertThat(loaded!!.name).isEqualTo("周会")
         assertThat(loaded.leadMinutes).isEqualTo(15)
-        assertThat(loaded.useExactAlarm).isTrue()
-        assertThat(loaded.notifiedAt).isNull()
+        assertThat(loaded.mode).isEqualTo(ReminderMode.ALARM)
+        assertThat(loaded.remindedOccurrenceStart).isNull()
     }
 
     @Test
@@ -90,14 +94,67 @@ class TodoRepositoryTest {
     }
 
     @Test
-    fun `标记已提醒后 other 字段不变`() = runTest {
+    fun `标记已提醒后其它字段不变`() = runTest {
         val id = repository.insert(newTodo(name = "会议"))
 
-        repository.markNotified(id, now)
+        repository.markReminded(id, now)
 
         val loaded = repository.findById(id)!!
-        assertThat(loaded.notifiedAt).isEqualTo(now)
+        assertThat(loaded.remindedOccurrenceStart).isEqualTo(now)
         assertThat(loaded.name).isEqualTo("会议")
+    }
+
+    @Test
+    fun `重叠查询只返回时间真正相交的未完成待办`() = runTest {
+        // 10:00-11:00 已有
+        val existing = repository.insert(newTodo(name = "已有会议", startAt = now + 60 * TestData.MINUTE))
+        // 完全重叠
+        val overlapping = repository.findOverlapping(now + 70 * TestData.MINUTE, now + 90 * TestData.MINUTE)
+        assertThat(overlapping.map { it.name }).containsExactly("已有会议")
+
+        // 紧邻但不相交
+        val adjacent = repository.findOverlapping(now + 120 * TestData.MINUTE, now + 150 * TestData.MINUTE)
+        assertThat(adjacent).isEmpty()
+
+        // 排除自己
+        val selfExcluded = repository.findOverlapping(
+            now + 60 * TestData.MINUTE,
+            now + 120 * TestData.MINUTE,
+            excludeId = existing,
+        )
+        assertThat(selfExcluded).isEmpty()
+    }
+
+    @Test
+    fun `已完成的待办不计入重叠`() = runTest {
+        val id = repository.insert(newTodo(name = "已完成", startAt = now + 60 * TestData.MINUTE))
+        repository.update(repository.findById(id)!!.copy(isDone = true))
+
+        val overlapping = repository.findOverlapping(now + 70 * TestData.MINUTE, now + 90 * TestData.MINUTE)
+
+        assertThat(overlapping).isEmpty()
+    }
+
+    @Test
+    fun `周期与例外日期可以正确往返`() = runTest {
+        val id = repository.insert(
+            newTodo(name = "每天晨会").copy(
+                recurrence = Recurrence.DAILY,
+                recurrenceExceptions = listOf(
+                    RecurrenceException("2026-03-01", RecurrenceExceptionKind.SKIPPED),
+                    RecurrenceException("2026-03-02", RecurrenceExceptionKind.OVERRIDDEN),
+                ),
+            )
+        )
+
+        val loaded = repository.findById(id)!!
+
+        assertThat(loaded.recurrence).isEqualTo(Recurrence.DAILY)
+        assertThat(loaded.recurrenceExceptions).hasSize(2)
+        assertThat(loaded.recurrenceExceptions.map { it.date })
+            .containsExactly("2026-03-01", "2026-03-02")
+        assertThat(loaded.recurrenceExceptions.map { it.kind })
+            .containsExactly(RecurrenceExceptionKind.SKIPPED, RecurrenceExceptionKind.OVERRIDDEN)
     }
 
     @Test

@@ -19,7 +19,7 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
 
     override fun schedule(plan: ReminderPlan) {
         val manager = alarmManager ?: return
-        val pendingIntent = buildPendingIntent(plan.todoId)
+        val pendingIntent = buildPendingIntent(plan.todoId, plan.occurrenceStart)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                 !manager.canScheduleExactAlarms()
@@ -40,15 +40,17 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
 
     override fun cancel(todoId: Long) {
         val manager = alarmManager ?: return
-        manager.cancel(buildPendingIntent(todoId))
+        // 取消时场次时间无关紧要：PendingIntent 的匹配靠 requestCode 与 data（都只含 todoId）。
+        manager.cancel(buildPendingIntent(todoId, 0L))
     }
 
-    private fun buildPendingIntent(todoId: Long): PendingIntent {
+    private fun buildPendingIntent(todoId: Long, occurrenceStart: Long): PendingIntent {
         val intent = Intent(context, ReminderAlarmReceiver::class.java).apply {
             action = ACTION_FIRE
             // data 唯一化，保证不同待办得到不同的 PendingIntent。
             data = android.net.Uri.parse("todolist://reminder/$todoId")
             putExtra(EXTRA_TODO_ID, todoId)
+            putExtra(EXTRA_OCCURRENCE_START, occurrenceStart)
         }
         return PendingIntent.getBroadcast(
             context,
@@ -61,6 +63,7 @@ class AlarmReminderScheduler(private val context: Context) : ReminderScheduler {
     companion object {
         const val ACTION_FIRE = "com.example.todolist.action.FIRE_REMINDER"
         const val EXTRA_TODO_ID = "extra_todo_id"
+        const val EXTRA_OCCURRENCE_START = "extra_occurrence_start"
 
         /** requestCode 需要是稳定的 int；用 id 低位即可。 */
         fun requestCodeOf(todoId: Long): Int = (todoId xor (todoId ushr 32)).toInt()

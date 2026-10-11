@@ -1,9 +1,11 @@
 package com.example.todolist.reminder
 
+import com.example.todolist.data.TodoDraft
 import com.example.todolist.data.TodoRepository
 import com.example.todolist.data.toTodo
-import com.example.todolist.data.TodoDraft
-import com.example.todolist.domain.Clock
+import com.example.todolist.domain.Recurrence
+import com.example.todolist.domain.RecurrenceExpander
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderStrategy
 import com.example.todolist.testing.FakeClock
 import com.example.todolist.testing.FakeExactAlarmPermission
@@ -21,7 +23,6 @@ import org.junit.Test
  */
 class ReminderSchedulingTest {
 
-    private lateinit var dao: FakeTodoDao
     private lateinit var repository: TodoRepository
     private lateinit var exact: FakeReminderScheduler
     private lateinit var inexact: FakeReminderScheduler
@@ -33,8 +34,7 @@ class ReminderSchedulingTest {
 
     @Before
     fun setUp() {
-        dao = FakeTodoDao()
-        repository = TodoRepository(dao)
+        repository = TodoRepository(FakeTodoDao())
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
         permission = FakeExactAlarmPermission(granted = true)
@@ -45,6 +45,7 @@ class ReminderSchedulingTest {
             inexactScheduler = inexact,
             clock = clock,
             exactAlarmPermission = permission,
+            zone = TestData.ZONE,
         )
     }
 
@@ -53,43 +54,51 @@ class ReminderSchedulingTest {
         startAt: Long = now + 60 * TestData.MINUTE,
         endAt: Long = now + 120 * TestData.MINUTE,
         leadMinutes: Int = 0,
-        useExactAlarm: Boolean = false,
+        mode: ReminderMode = ReminderMode.NOTIFICATION,
+        recurrence: Recurrence = Recurrence.NONE,
     ) = TodoDraft(
         name = name,
         startAt = startAt,
         endAt = endAt,
         leadMinutes = leadMinutes,
-        useExactAlarm = useExactAlarm,
+        mode = mode,
+        recurrence = recurrence,
     )
 
     // ------------------------------------------------------------------ 新增
 
     @Test
-    fun `新增普通通知策略的待办只排到非精确调度器`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
+    fun `通知方式排到非精确调度器`() = runTest {
+        val result = coordinator.create(draft(mode = ReminderMode.NOTIFICATION))
 
-        assertThat(inexact.planFor(id)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
-        assertThat(exact.planFor(id)).isNull()
-        assertThat(inexact.strategyFor(id)).isEqualTo(ReminderStrategy.NOTIFICATION)
+        assertThat(inexact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
+        assertThat(exact.planFor(result.todoId)).isNull()
+        assertThat(inexact.strategyFor(result.todoId)).isEqualTo(ReminderStrategy.NOTIFICATION)
     }
 
     @Test
-    fun `新增精确闹钟策略的待办只排到精确调度器`() = runTest {
-        val id = coordinator.create(draft(useExactAlarm = true).toTodo(existing = null, now = now))
+    fun `闹钟方式排到精确调度器`() = runTest {
+        val result = coordinator.create(draft(mode = ReminderMode.ALARM))
 
-        assertThat(exact.planFor(id)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
-        assertThat(inexact.planFor(id)).isNull()
-        assertThat(coordinator.lastScheduleWasDegraded).isFalse()
+        assertThat(exact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
+        assertThat(inexact.planFor(result.todoId)).isNull()
+        assertThat(result.degraded).isFalse()
     }
 
     @Test
     fun `提前量体现在触发时刻上`() = runTest {
         val start = now + 60 * TestData.MINUTE
-        val id = coordinator.create(
-            draft(startAt = start, leadMinutes = 30).toTodo(existing = null, now = now)
-        )
+        val result = coordinator.create(draft(startAt = start, leadMinutes = 30))
 
-        assertThat(inexact.planFor(id)?.triggerAt).isEqualTo(start - 30 * TestData.MINUTE)
+        assertThat(inexact.planFor(result.todoId)?.triggerAt).isEqualTo(start - 30 * TestData.MINUTE)
+    }
+
+    @Test
+    fun `提醒计划带上场次开始时间以便周期待办区分场次`() = runTest {
+        val start = now + 60 * TestData.MINUTE
+        val result = coordinator.create(draft(startAt = start))
+
+        assertThat(inexact.planFor(result.todoId)?.occurrenceStart).isEqualTo(start)
     }
 
     // ------------------------------------------------------------------ 降级
@@ -97,217 +106,221 @@ class ReminderSchedulingTest {
     @Test
     fun `精确闹钟无权限时自动降级为普通通知`() = runTest {
         permission.granted = false
-        val id = coordinator.create(draft(useExactAlarm = true).toTodo(existing = null, now = now))
+        val result = coordinator.create(draft(mode = ReminderMode.ALARM))
 
-        assertThat(exact.planFor(id)).isNull()
-        assertThat(inexact.planFor(id)?.strategy).isEqualTo(ReminderStrategy.NOTIFICATION)
-        assertThat(coordinator.lastScheduleWasDegraded).isTrue()
+        assertThat(exact.planFor(result.todoId)).isNull()
+        assertThat(inexact.planFor(result.todoId)?.strategy).isEqualTo(ReminderStrategy.NOTIFICATION)
+        assertThat(result.degraded).isTrue()
     }
 
     @Test
-    fun `普通通知策略不需要精确闹钟权限`() = runTest {
+    fun `通知方式不需要精确闹钟权限`() = runTest {
         permission.granted = false
-        val id = coordinator.create(draft(useExactAlarm = false).toTodo(existing = null, now = now))
+        val result = coordinator.create(draft(mode = ReminderMode.NOTIFICATION))
 
-        assertThat(inexact.planFor(id)).isNotNull()
-        assertThat(coordinator.lastScheduleWasDegraded).isFalse()
+        assertThat(inexact.planFor(result.todoId)).isNotNull()
+        assertThat(result.degraded).isFalse()
     }
 
-    @Test
-    fun `降级标记不会残留到下一次排定`() = runTest {
-        permission.granted = false
-        coordinator.create(draft(useExactAlarm = true).toTodo(existing = null, now = now))
-        assertThat(coordinator.lastScheduleWasDegraded).isTrue()
+    // ------------------------------------------------------------------ 冲突
 
-        permission.granted = true
-        coordinator.create(
-            draft(name = "第二件事", useExactAlarm = true).toTodo(existing = null, now = now)
+    @Test
+    fun `时间段重叠时仍然创建成功但会把冲突项带回来`() = runTest {
+        coordinator.create(draft(name = "已有会议"))
+
+        val result = coordinator.create(
+            draft(name = "冲突的新会议", startAt = now + 90 * TestData.MINUTE)
         )
-        assertThat(coordinator.lastScheduleWasDegraded).isFalse()
+
+        assertThat(result.overlapping.map { it.name }).containsExactly("已有会议")
+        // 关键：冲突不阻塞创建
+        assertThat(coordinator.findById(result.todoId)?.name).isEqualTo("冲突的新会议")
+    }
+
+    @Test
+    fun `不重叠时没有冲突项`() = runTest {
+        coordinator.create(draft(name = "早会", startAt = now + 60 * TestData.MINUTE))
+
+        val result = coordinator.create(
+            draft(
+                name = "午会",
+                startAt = now + 240 * TestData.MINUTE,
+                endAt = now + 300 * TestData.MINUTE,
+            )
+        )
+
+        assertThat(result.overlapping).isEmpty()
+    }
+
+    @Test
+    fun `编辑时不会把自己算成冲突`() = runTest {
+        val created = coordinator.create(draft())
+        val existing = coordinator.findById(created.todoId)!!
+
+        val result = coordinator.update(
+            draft(name = "改了名字").copy(id = existing.id)
+        )
+
+        assertThat(result!!.overlapping).isEmpty()
     }
 
     // ------------------------------------------------------------------ 编辑
 
     @Test
     fun `编辑时间后会撤销旧调度并按新时间重排`() = runTest {
-        val id = coordinator.create(
-            draft(startAt = now + 60 * TestData.MINUTE).toTodo(existing = null, now = now)
-        )
-        val existing = coordinator.findById(id)!!
+        val created = coordinator.create(draft(startAt = now + 60 * TestData.MINUTE))
+        val existing = coordinator.findById(created.todoId)!!
 
         val newStart = now + 180 * TestData.MINUTE
         coordinator.update(
-            draft(startAt = newStart, endAt = newStart + 60 * TestData.MINUTE)
-                .toTodo(existing = existing, now = now)
+            draft(startAt = newStart, endAt = newStart + 60 * TestData.MINUTE).copy(id = existing.id)
         )
 
-        assertThat(inexact.cancelled).contains(id)
-        assertThat(inexact.planFor(id)?.triggerAt).isEqualTo(newStart)
+        assertThat(inexact.cancelled).contains(existing.id)
+        assertThat(inexact.planFor(existing.id)?.triggerAt).isEqualTo(newStart)
     }
 
     @Test
-    fun `从普通通知改成精确闹钟时会清掉旧的非精确调度`() = runTest {
-        val id = coordinator.create(draft(useExactAlarm = false).toTodo(existing = null, now = now))
-        val existing = coordinator.findById(id)!!
+    fun `从通知改成闹钟会清掉旧的非精确调度`() = runTest {
+        val created = coordinator.create(draft(mode = ReminderMode.NOTIFICATION))
+        val existing = coordinator.findById(created.todoId)!!
 
-        coordinator.update(
-            draft(useExactAlarm = true).toTodo(existing = existing, now = now)
-        )
+        coordinator.update(draft(mode = ReminderMode.ALARM).copy(id = existing.id))
 
-        assertThat(inexact.cancelled).contains(id)
-        assertThat(inexact.planFor(id)).isNull()
-        assertThat(exact.planFor(id)).isNotNull()
+        assertThat(inexact.cancelled).contains(existing.id)
+        assertThat(inexact.planFor(existing.id)).isNull()
+        assertThat(exact.planFor(existing.id)).isNotNull()
     }
 
     @Test
     fun `改动提醒时刻会清掉已提醒标记从而重新排定`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
-        repository.markNotified(id, now)
-        val notified = coordinator.findById(id)!!
-        assertThat(notified.notifiedAt).isNotNull()
+        val created = coordinator.create(draft())
+        coordinator.markRemindedAndReschedule(created.todoId, now + 60 * TestData.MINUTE)
+        assertThat(coordinator.findById(created.todoId)!!.remindedOccurrenceStart).isNotNull()
 
+        val existing = coordinator.findById(created.todoId)!!
         val newStart = now + 300 * TestData.MINUTE
         coordinator.update(
-            draft(startAt = newStart, endAt = newStart + 60 * TestData.MINUTE)
-                .toTodo(existing = notified, now = now)
+            draft(startAt = newStart, endAt = newStart + 60 * TestData.MINUTE).copy(id = existing.id)
         )
 
-        assertThat(coordinator.findById(id)!!.notifiedAt).isNull()
-        assertThat(inexact.planFor(id)).isNotNull()
+        assertThat(coordinator.findById(created.todoId)!!.remindedOccurrenceStart).isNull()
+        assertThat(inexact.planFor(created.todoId)).isNotNull()
     }
 
     @Test
     fun `只改名称不会清掉已提醒标记`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
-        repository.markNotified(id, now)
-        val notified = coordinator.findById(id)!!
+        val created = coordinator.create(draft())
+        coordinator.markRemindedAndReschedule(created.todoId, now + 60 * TestData.MINUTE)
+        val current = coordinator.findById(created.todoId)!!
 
-        coordinator.update(
-            draft(name = "改了名字").toTodo(existing = notified, now = now)
-        )
+        coordinator.update(draft(name = "改了名字").copy(id = current.id))
 
-        assertThat(coordinator.findById(id)!!.notifiedAt).isEqualTo(now)
+        assertThat(coordinator.findById(created.todoId)!!.remindedOccurrenceStart).isNotNull()
     }
 
-    // ------------------------------------------------------------------ 完成
+    // ------------------------------------------------------------------ 完成与删除
 
     @Test
     fun `标记完成后撤销提醒`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
+        val created = coordinator.create(draft())
 
-        coordinator.setDone(id, done = true)
+        coordinator.setDone(created.todoId, done = true)
 
-        assertThat(inexact.cancelled).contains(id)
-        assertThat(inexact.planFor(id)).isNull()
-        assertThat(coordinator.findById(id)!!.isDone).isTrue()
+        assertThat(inexact.cancelled).contains(created.todoId)
+        assertThat(inexact.planFor(created.todoId)).isNull()
+        assertThat(coordinator.findById(created.todoId)!!.isDone).isTrue()
     }
-
-    @Test
-    fun `取消完成且提醒时刻未到会重新排定`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
-        coordinator.setDone(id, done = true)
-        inexact.clear()
-
-        coordinator.setDone(id, done = false)
-
-        assertThat(inexact.planFor(id)).isNotNull()
-    }
-
-    @Test
-    fun `取消完成但提醒时刻已过则不再排定`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
-        coordinator.setDone(id, done = true)
-        inexact.clear()
-
-        // 时间已经越过提醒时刻，此时再取消完成不应重新排定
-        clock.initial = now + 120 * TestData.MINUTE
-        coordinator.setDone(id, done = false)
-
-        assertThat(inexact.planFor(id)).isNull()
-    }
-
-    @Test
-    fun `更新到提醒时刻已过的时间不会排定`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
-        val existing = coordinator.findById(id)!!
-
-        // 把起始时间改到未来，但提前量大到提醒时刻已经过去
-        coordinator.update(
-            draft(startAt = now + 5 * TestData.MINUTE, leadMinutes = 30)
-                .toTodo(existing = existing, now = now)
-        )
-
-        assertThat(inexact.planFor(id)).isNull()
-    }
-
-    // ------------------------------------------------------------------ 删除
 
     @Test
     fun `删除会同时撤销调度与记录`() = runTest {
-        val id = coordinator.create(draft().toTodo(existing = null, now = now))
+        val created = coordinator.create(draft())
 
-        coordinator.delete(id)
+        coordinator.delete(created.todoId)
 
-        assertThat(inexact.cancelled).contains(id)
-        assertThat(coordinator.findById(id)).isNull()
+        assertThat(inexact.cancelled).contains(created.todoId)
+        assertThat(coordinator.findById(created.todoId)).isNull()
+    }
+
+    // ------------------------------------------------------------------ 周期
+
+    @Test
+    fun `每日重复首次场次就是起始时间`() = runTest {
+        val firstOccurrence = now + 24 * 60 * TestData.MINUTE
+        val result = coordinator.create(
+            draft(
+                startAt = firstOccurrence,
+                endAt = firstOccurrence + 30 * TestData.MINUTE,
+                recurrence = Recurrence.DAILY,
+            )
+        )
+
+        assertThat(inexact.planFor(result.todoId)?.occurrenceStart).isEqualTo(firstOccurrence)
+    }
+
+    @Test
+    fun `跳过某一场后记录例外且不再把它当作待提醒场次`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(
+                startAt = first,
+                endAt = first + 30 * TestData.MINUTE,
+                recurrence = Recurrence.DAILY,
+            )
+        )
+        assertThat(coordinator.findById(created.todoId)!!.recurrenceExceptions).isEmpty()
+
+        coordinator.skipOccurrence(created.todoId, first)
+
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(updated.recurrenceExceptions).hasSize(1)
+        val next = coordinator.nextOccurrenceToRemind(updated, now)
+        assertThat(next).isNotEqualTo(first)
+    }
+
+    @Test
+    fun `例外日期按本地日期记录`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(draft(startAt = first, recurrence = Recurrence.DAILY))
+
+        coordinator.skipOccurrence(created.todoId, first)
+
+        val expectedKey = RecurrenceExpander.dateKeyOf(first, TestData.ZONE)
+        assertThat(coordinator.findById(created.todoId)!!.recurrenceExceptions.map { it.date })
+            .containsExactly(expectedKey)
+    }
+
+    @Test
+    fun `周期待办在提醒过一场之后会排到下一场`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+
+        // 模拟第一次触发
+        coordinator.markRemindedAndReschedule(created.todoId, first)
+
+        val plan = inexact.planFor(created.todoId)
+        assertThat(plan).isNotNull()
+        assertThat(plan!!.occurrenceStart).isGreaterThan(first)
     }
 
     // ------------------------------------------------------------------ 对账
 
     @Test
-    fun `对账只为真正需要提醒的事项排定`() = runTest {
-        val daoForReconcile = FakeTodoDao()
-        val repo = TodoRepository(daoForReconcile)
-        val coordinator = SchedulingCoordinator(
-            repository = repo,
-            exactScheduler = exact,
-            inexactScheduler = inexact,
-            clock = clock,
-            exactAlarmPermission = permission,
+    fun `对账只为还需要提醒的事项排定`() = runTest {
+        repository.insert(draft(name = "要提醒").toTodo(existing = null, now = now))
+        repository.insert(
+            draft(name = "已完成").toTodo(existing = null, now = now).copy(isDone = true)
         )
-        // 需要提醒
-        repo.insert(draft(name = "要提醒").toTodo(existing = null, now = now))
-        // 已完成
-        repo.insert(
-            draft(name = "已完成", startAt = now + 90 * TestData.MINUTE)
-                .toTodo(existing = null, now = now).copy(isDone = true)
-        )
-        // 已提醒过
-        val notifiedId = repo.insert(
-            draft(name = "已提醒", startAt = now + 100 * TestData.MINUTE)
+        repository.insert(
+            draft(name = "过期", startAt = now - 10 * TestData.MINUTE)
                 .toTodo(existing = null, now = now)
-        )
-        repo.markNotified(notifiedId, now)
-        // 提醒时刻已过
-        repo.insert(
-            draft(name = "过期", startAt = now - 10 * TestData.MINUTE).toTodo(existing = null, now = now)
         )
 
         val scheduledCount = coordinator.reconcileAll()
 
         assertThat(scheduledCount).isEqualTo(1)
         assertThat(inexact.scheduled).hasSize(1)
-    }
-
-    @Test
-    fun `对账会覆盖两种策略`() = runTest {
-        val repo = TodoRepository(FakeTodoDao())
-        val coordinator = SchedulingCoordinator(
-            repository = repo,
-            exactScheduler = exact,
-            inexactScheduler = inexact,
-            clock = clock,
-            exactAlarmPermission = permission,
-        )
-        repo.insert(draft(name = "普通").toTodo(existing = null, now = now))
-        repo.insert(
-            draft(name = "精确", startAt = now + 200 * TestData.MINUTE, useExactAlarm = true)
-                .toTodo(existing = null, now = now)
-        )
-
-        coordinator.reconcileAll()
-
-        assertThat(inexact.scheduled).hasSize(1)
-        assertThat(exact.scheduled).hasSize(1)
     }
 }

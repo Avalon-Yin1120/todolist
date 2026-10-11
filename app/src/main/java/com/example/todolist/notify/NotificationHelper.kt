@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.todolist.MainActivity
 import com.example.todolist.R
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.Todo
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -22,7 +23,12 @@ import java.util.Locale
 /**
  * 通知渠道与提醒通知的落地实现。
  *
- * 所有对系统通知接口的调用都收敛在这里，便于 Robolectric 测试直接断言渠道与通知属性。
+ * 两种提醒方式都走这里：
+ * * [ReminderMode.NOTIFICATION]：普通通知，点击进入应用；
+ * * [ReminderMode.ALARM]：高优先级通知 + **全屏 Intent**（系统在锁屏/亮屏时直接弹出
+ *   [com.example.todolist.ui.alarm.AlarmActivity]），配合页面内的提示音与常亮，
+ *   行为接近系统闹钟。
+ *
  * 方法声明为 open 是为了让测试能覆盖「发送」这一步，只验证业务判断。
  */
 open class NotificationHelper(private val context: Context) {
@@ -36,10 +42,14 @@ open class NotificationHelper(private val context: Context) {
         val channel = NotificationChannel(
             CHANNEL_ID,
             context.getString(R.string.notif_channel_name),
+            // 闹钟式提醒需要能绕过免打扰并点亮屏幕
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             description = context.getString(R.string.notif_channel_desc)
             enableVibration(true)
+            // 让渠道声音与震动在锁屏上也能触发
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            setBypassDnd(true)
         }
         manager.createNotificationChannel(channel)
     }
@@ -56,42 +66,44 @@ open class NotificationHelper(private val context: Context) {
         return NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
-    /** 发出一次提醒通知。 */
+    /** 发出一次提醒。 */
     open fun notifyReminder(todo: Todo) {
         ensureChannel()
         val timeText = formatRange(todo)
-        val title = todo.name
         val text = todoText(timeText)
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_reminder)
-            .setContentTitle(title)
+            .setContentTitle(todo.name)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(contentIntent(todo.id))
-            .build()
 
-        // 权限缺失时 NotificationManagerCompat.notify 本身不会抛异常，
-        // 但显式短路让调用方与测试都更清楚行为。
+        if (todo.mode == ReminderMode.ALARM) {
+            builder.setFullScreenIntent(fullScreenIntent(todo.id), true)
+            builder.setDefaults(NotificationCompat.DEFAULT_ALL)
+        }
+
+        val notification = builder.build()
+
         if (!canPostNotifications()) {
             Log.w(TAG, "无法发送提醒：通知权限未开启（todo id=${todo.id}）")
             return
         }
         val notificationId = notificationIdOf(todo.id)
         NotificationManagerCompat.from(context).notify(notificationId, notification)
-        // 排查提醒不显示时最有用的一条日志：记录通知 id 与是否真的进入系统。
         Log.i(
             TAG,
-            "已发送提醒通知：id=$notificationId todo=${todo.id} name=${todo.name} " +
-                "active=${NotificationManagerCompat.from(context).activeNotifications.size}",
+            "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +
+                "name=${todo.name}",
         )
     }
 
-    /** 主动取消某条待办的通知（用户删除待办时调用）。 */
+    /** 主动取消某条待办的通知。 */
     open fun cancel(todoId: Long) {
         NotificationManagerCompat.from(context).cancel(notificationIdOf(todoId))
     }
@@ -101,6 +113,24 @@ open class NotificationHelper(private val context: Context) {
             action = ACTION_OPEN_TODO
             data = android.net.Uri.parse("todolist://todo/$todoId")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            context,
+            notificationIdOf(todoId),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /** 全屏 Intent：让系统直接把闹钟页拉到前台（锁屏上也生效）。 */
+    private fun fullScreenIntent(todoId: Long): PendingIntent {
+        val intent = Intent(context, com.example.todolist.ui.alarm.AlarmActivity::class.java).apply {
+            action = com.example.todolist.ui.alarm.AlarmActivity.ACTION_SHOW_ALARM
+            data = android.net.Uri.parse("todolist://alarm/$todoId")
+            putExtra(com.example.todolist.ui.alarm.AlarmActivity.EXTRA_TODO_ID, todoId)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
         }
         return PendingIntent.getActivity(
             context,

@@ -2,6 +2,8 @@ package com.example.todolist
 
 import android.app.Application
 import androidx.work.Configuration
+import com.example.todolist.data.SettingsStore
+import com.example.todolist.data.SharedPreferencesSettingsStore
 import com.example.todolist.data.TodoRepository
 import com.example.todolist.data.local.TodoDatabase
 import com.example.todolist.domain.Clock
@@ -98,6 +100,9 @@ class AppGraph(application: Application) {
 
     val exactAlarmPermission: ExactAlarmPermission = SystemExactAlarmPermission(application)
 
+    /** 用户设置：提醒方式、记住的提前量、是否二次确认等。 */
+    val settings: SettingsStore = SharedPreferencesSettingsStore(application)
+
     private val exactScheduler: ReminderScheduler = AlarmReminderScheduler(application)
 
     private val inexactScheduler: ReminderScheduler = WorkReminderScheduler(application)
@@ -111,8 +116,7 @@ class AppGraph(application: Application) {
     )
 
     val fireHandler: ReminderFireHandler = ReminderFiringService(
-        repository = repository,
-        notificationHelper = notificationHelper,
-        clock = clock,
+        coordinator = coordinator,
+        onFire = { todo -> notificationHelper.notifyReminder(todo) },
     )
 }

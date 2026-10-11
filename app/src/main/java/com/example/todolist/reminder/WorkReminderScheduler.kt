@@ -25,6 +25,7 @@ class WorkReminderScheduler(private val context: Context) : ReminderScheduler {
             .setInputData(
                 Data.Builder()
                     .putLong(ReminderWorker.KEY_TODO_ID, plan.todoId)
+                    .putLong(ReminderWorker.KEY_OCCURRENCE_START, plan.occurrenceStart)
                     .build()
             )
             .addTag(tagOf(plan.todoId))

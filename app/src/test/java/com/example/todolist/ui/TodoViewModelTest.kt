@@ -1,6 +1,7 @@
 package com.example.todolist.ui
 
 import androidx.test.core.app.ApplicationProvider
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.data.TodoRepository
 import com.example.todolist.reminder.SchedulingCoordinator
 import com.example.todolist.testing.FakeClock
@@ -37,6 +38,7 @@ class TodoViewModelTest {
     private lateinit var permission: FakeExactAlarmPermission
     private lateinit var clock: FakeClock
     private lateinit var coordinator: SchedulingCoordinator
+    private lateinit var settings: com.example.todolist.data.InMemorySettingsStore
     private lateinit var viewModel: TodoViewModel
 
     private val now = TestData.NOW
@@ -49,14 +51,17 @@ class TodoViewModelTest {
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
         permission = FakeExactAlarmPermission(granted = true)
+        settings = com.example.todolist.data.InMemorySettingsStore()
         clock = FakeClock(now)
-        coordinator = SchedulingCoordinator(repository, exact, inexact, clock, permission)
+        coordinator = SchedulingCoordinator(repository, exact, inexact, clock, permission, TestData.ZONE)
         viewModel = TodoViewModel(
             application = ApplicationProvider.getApplicationContext(),
             repository = repository,
             coordinator = coordinator,
+            settings = settings,
             clock = clock,
             canScheduleExactAlarms = { permission.granted },
+            zone = TestData.ZONE,
         )
     }
 
@@ -117,7 +122,7 @@ class TodoViewModelTest {
     fun `精确策略缺权限时提交仍成功但给出降级提示`() = runTest(testDispatcher) {
         permission.granted = false
         fillValidForm()
-        viewModel.form.setUseExactAlarm(true)
+        viewModel.form.setMode(ReminderMode.ALARM)
 
         viewModel.submitForm()
         settle()
@@ -182,7 +187,7 @@ class TodoViewModelTest {
         val created = viewModel.uiState.value.todos.single()
         viewModel.openEditForm(created)
 
-        viewModel.delete(created.id)
+        viewModel.confirmDelete(created.id)
         settle()
 
         assertThat(viewModel.uiState.value.todos).isEmpty()
