@@ -41,6 +41,10 @@ data class DraftFormState(
     val weekDays: WeekDays = emptySet(),
     /** 月重复选中的几号。 */
     val monthDays: MonthDays = emptySet(),
+    /** 重复截止日期 yyyy-MM-dd；为空表示不限。 */
+    val recurrenceEndDate: String? = null,
+    /** 重复总次数；为空表示不限。 */
+    val recurrenceCount: Int? = null,
 ) {
     /** 提前量的可读描述，例如「提前 30 分钟」。 */
     val leadLabel: String
@@ -94,6 +98,8 @@ class DraftFormStateHolder(
         recurrence: Recurrence = Recurrence.NONE,
         weekDays: WeekDays = emptySet(),
         monthDays: MonthDays = emptySet(),
+        recurrenceEndDate: String? = null,
+        recurrenceCount: Int? = null,
     ) {
         val start = startAt ?: defaultStartAtProvider(clock.now())
         val lead = leadMinutes ?: rememberedLeadMinutes().coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
@@ -114,6 +120,8 @@ class DraftFormStateHolder(
                     emptySet()
                 }
             },
+            recurrenceEndDate = recurrenceEndDate,
+            recurrenceCount = recurrenceCount,
             monthDays = monthDays.ifEmpty {
                 if (recurrence == Recurrence.MONTHLY) {
                     setOf(Instant.ofEpochMilli(start).atZone(zone).dayOfMonth)
@@ -203,6 +211,16 @@ class DraftFormStateHolder(
         )
     }
 
+    /** 设置重复总次数；null 表示不限。 */
+    fun setRecurrenceCount(value: Int?) {
+        _state.value = _state.value.copy(recurrenceCount = value?.takeIf { it > 0 })
+    }
+
+    /** 设置重复截止日期（yyyy-MM-dd）；null 表示不限。 */
+    fun setRecurrenceEndDate(value: String?) {
+        _state.value = _state.value.copy(recurrenceEndDate = value?.takeIf { it.isNotBlank() })
+    }
+
     /** 勾选/取消某个星期。 */
     fun toggleWeekDay(day: DayOfWeek) {
         val current = _state.value.weekDays
@@ -246,6 +264,8 @@ class DraftFormStateHolder(
             recurrence = current.recurrence,
             weekDays = current.weekDays,
             monthDays = current.monthDays,
+            recurrenceEndDate = current.recurrenceEndDate,
+            recurrenceCount = current.recurrenceCount,
         )
     }
 

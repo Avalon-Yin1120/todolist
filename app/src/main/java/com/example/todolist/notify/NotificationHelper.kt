@@ -50,6 +50,17 @@ open class NotificationHelper(private val context: Context) {
             // 让渠道声音与震动在锁屏上也能触发
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
+            // 显式指定提示音：只设 IMPORTANCE_HIGH 而不给 sound，
+            // 部分 ROM 会建出「静音」渠道，用户反馈过通知没声音
+            setSound(
+                android.media.RingtoneManager.getDefaultUri(
+                    android.media.RingtoneManager.TYPE_NOTIFICATION,
+                ),
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
         }
         manager.createNotificationChannel(channel)
     }
@@ -84,6 +95,9 @@ open class NotificationHelper(private val context: Context) {
             .setContentIntent(contentIntent(todo.id))
 
         if (todo.mode == ReminderMode.ALARM) {
+            // 通知本身也带全屏 Intent 作为兜底（锁屏时系统会直接拉起闹钟页），
+            // 但真正保证「响铃 + 亮屏 + 弹页」的是 AlarmRingService：
+            // 屏幕亮着时系统不会用全屏 Intent 拉起界面，只给一条横幅。
             builder.setFullScreenIntent(fullScreenIntent(todo.id), true)
             builder.setDefaults(NotificationCompat.DEFAULT_ALL)
         }
@@ -96,6 +110,12 @@ open class NotificationHelper(private val context: Context) {
         }
         val notificationId = notificationIdOf(todo.id)
         NotificationManagerCompat.from(context).notify(notificationId, notification)
+
+        // 闹钟式：额外启动前台服务，确保响铃、亮屏并弹出闹钟页
+        if (todo.mode == ReminderMode.ALARM) {
+            runCatching { AlarmRingService.start(context, todo.id, todo.name) }
+                .onFailure { Log.w(TAG, "启动闹钟服务失败：${it.message}") }
+        }
         Log.i(
             TAG,
             "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +

@@ -8,6 +8,7 @@ import com.example.todolist.testing.FakeClock
 import com.example.todolist.testing.FakeExactAlarmPermission
 import com.example.todolist.testing.FakeReminderScheduler
 import com.example.todolist.testing.FakeTodoDao
+import com.example.todolist.domain.Recurrence
 import com.example.todolist.testing.TestData
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +168,64 @@ class TodoViewModelTest {
         assertThat(todos).hasSize(1)
         assertThat(todos.single().name).isEqualTo("新名字")
         assertThat(todos.single().id).isEqualTo(created.id)
+    }
+
+    // ------------------------------------------------ 「仅修改这一次」（第 14 项回归）
+
+    @Test
+    fun `仅修改这一次时中途返回不会多出待办`() = runTest(testDispatcher) {
+        // 先用界面建一条重复待办
+        fillValidForm("每周例会")
+        viewModel.form.setRecurrence(Recurrence.WEEKLY)
+        viewModel.submitForm()
+        settle()
+        val recurring = viewModel.uiState.value.todos.single()
+        assertThat(recurring.recurrence).isEqualTo(Recurrence.WEEKLY)
+
+        // 点「改」-> 选择「仅这一次」，然后直接返回（不保存）
+        viewModel.openEditForm(recurring)
+        settle()
+        assertThat(viewModel.uiState.value.dialog).isNotNull()
+        viewModel.resolveRecurrenceScope(entireSeries = false)
+        settle()
+        assertThat(viewModel.uiState.value.oneOffEdit).isTrue()
+        viewModel.dismissForm()
+        settle()
+
+        // 库里仍然只有原来那一条：早先的实现会在打开表单时就先建一条，于是多出一条
+        val todos = viewModel.uiState.value.todos
+        assertThat(todos).hasSize(1)
+        assertThat(todos.single().id).isEqualTo(recurring.id)
+    }
+
+    @Test
+    fun `仅修改这一次保存后才落库并把原场次标记为例外`() = runTest(testDispatcher) {
+        fillValidForm("每周例会")
+        viewModel.form.setRecurrence(Recurrence.WEEKLY)
+        viewModel.submitForm()
+        settle()
+        val recurring = viewModel.uiState.value.todos.single()
+
+        viewModel.openEditForm(recurring)
+        settle()
+        viewModel.resolveRecurrenceScope(entireSeries = false)
+        settle()
+        viewModel.form.setName("这周改到下午")
+        viewModel.submitForm()
+        settle()
+
+        val todos = viewModel.uiState.value.todos
+        // 一条独立待办 + 原规则
+        assertThat(todos).hasSize(2)
+        val oneOff = todos.first { it.id != recurring.id }
+        assertThat(oneOff.name).isEqualTo("这周改到下午")
+        assertThat(oneOff.recurrence).isEqualTo(Recurrence.NONE)
+        assertThat(viewModel.uiState.value.oneOffEdit).isFalse()
+
+        // 原规则上该日期被标记为例外，同一天不会出现两条场次
+        val updated = todos.first { it.id == recurring.id }
+        assertThat(updated.recurrenceExceptions.map { it.date })
+            .contains(DateFormats.toLocalDate(recurring.startAt, TestData.ZONE).toString())
     }
 
     @Test

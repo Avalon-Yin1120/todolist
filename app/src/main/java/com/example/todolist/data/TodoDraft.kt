@@ -24,6 +24,10 @@ data class TodoDraft(
     val weekDays: WeekDays = emptySet(),
     /** 月重复选中的几号。 */
     val monthDays: MonthDays = emptySet(),
+    /** 重复截止日期 yyyy-MM-dd；为空表示不限。 */
+    val recurrenceEndDate: String? = null,
+    /** 重复总次数；为空表示不限。 */
+    val recurrenceCount: Int? = null,
 )
 
 /**
@@ -46,6 +50,8 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
             recurrence = recurrence,
             weekDays = weekDays,
             monthDays = monthDays,
+            recurrenceEndDate = recurrenceEndDate,
+            recurrenceCount = recurrenceCount,
             isDone = false,
             remindedOccurrenceStart = null,
             createdAt = now,
@@ -58,7 +64,9 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
         existing.mode != mode ||
         existing.recurrence != recurrence ||
         existing.weekDays != weekDays ||
-        existing.monthDays != monthDays
+        existing.monthDays != monthDays ||
+        existing.recurrenceEndDate != recurrenceEndDate ||
+        existing.recurrenceCount != recurrenceCount
     val recurrenceClosed = existing.recurrence.isRecurring && !recurrence.isRecurring
 
     return existing.copy(
@@ -70,6 +78,8 @@ fun TodoDraft.toTodo(existing: Todo?, now: Long): Todo {
         recurrence = recurrence,
         weekDays = weekDays,
         monthDays = monthDays,
+        recurrenceEndDate = recurrenceEndDate,
+        recurrenceCount = recurrenceCount,
         recurrenceExceptions = if (recurrenceClosed) emptyList() else existing.recurrenceExceptions,
         remindedOccurrenceStart = if (scheduleChanged) null else existing.remindedOccurrenceStart,
         updatedAt = now,

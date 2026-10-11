@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 提醒时振动 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 闹钟式提醒的前台服务：保证到点响铃、亮屏并弹出提醒页 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".TodoApp"
@@ -63,6 +66,16 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+        <!-- 闹钟式提醒的前台服务：只靠通知的全屏 Intent 在屏幕亮着时不会拉起界面，
+             这里主动播放闹钟铃声并直接打开闹钟页 -->
+        <service
+            android:name=".notify.AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm_ringing" />
+        </service>
     </application>
 
 </manifest>

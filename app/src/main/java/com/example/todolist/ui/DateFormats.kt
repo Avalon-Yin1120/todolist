@@ -51,6 +51,24 @@ object DateFormats {
     fun monthDay(epochMillis: Long, zone: ZoneId): String =
         java.time.Instant.ofEpochMilli(epochMillis).atZone(zone).format(MONTH_DAY)
 
+    /**
+     * 由「年 / 月 / 日」三个输入框的文本构造日期，非法时返回 null。
+     *
+     * 抽成纯函数是为了能直接单测：这段解析决定了用户手填的日期能不能被接受，
+     * 而它过去正是缺陷来源（要求 2026/01/01、拒绝 2026/1/1）。
+     */
+    fun parseDateParts(yearText: String, monthText: String, dayText: String): LocalDate? {
+        val year = yearText.trim().toIntOrNull() ?: return null
+        val month = monthText.trim().toIntOrNull() ?: return null
+        val day = dayText.trim().toIntOrNull() ?: return null
+        if (year !in MIN_YEAR..MAX_YEAR || month !in 1..12 || day !in 1..31) return null
+        return runCatching { LocalDate.of(year, month, day) }.getOrNull()
+    }
+
+    /** 手动输入允许的年份范围。 */
+    const val MIN_YEAR = 1900
+    const val MAX_YEAR = 2200
+
     fun toLocalDate(epochMillis: Long, zone: ZoneId): LocalDate =
         java.time.Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate()
 

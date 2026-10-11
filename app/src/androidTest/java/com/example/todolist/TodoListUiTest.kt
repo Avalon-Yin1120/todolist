@@ -29,6 +29,10 @@ import com.example.todolist.ui.TAG_FORM_SCREEN
 import com.example.todolist.ui.TAG_MODE_ALARM
 import com.example.todolist.ui.TAG_MODE_NOTIFICATION
 import com.example.todolist.ui.TAG_MONTHDAY_PREFIX
+import com.example.todolist.ui.TAG_PERIOD_PREV
+import com.example.todolist.ui.TAG_PERIOD_NEXT
+import com.example.todolist.ui.TAG_BACK_TO_TODAY
+import com.example.todolist.ui.TAG_PERIOD_LABEL
 import com.example.todolist.ui.TAG_RECURRENCE_PREFIX
 import com.example.todolist.ui.TAG_WEEKDAY_PREFIX
 import com.example.todolist.ui.TAG_SETTINGS_BUTTON
@@ -201,8 +205,11 @@ class TodoListUiTest {
         composeRule.onNodeWithTag("start_date_button").performClick()
         composeRule.waitForIdle()
 
-        // 日期选择器出现
-        composeRule.onNodeWithText("选择日期").assertIsDisplayed()
+        // 日期对话框出现：以「年/月/日」三个输入框为标志
+        // （不再断言「选择日期」标题——那个标题由 DatePicker 自己渲染，位置随内容滚动）
+        composeRule.onNodeWithTag("date_year").assertExists()
+        composeRule.onNodeWithTag("date_month").assertExists()
+        composeRule.onNodeWithTag("date_day").assertExists()
         composeRule.onNodeWithTag("date_confirm").performClick()
         composeRule.waitForIdle()
 
@@ -211,6 +218,94 @@ class TodoListUiTest {
         org.junit.Assert.assertEquals(before, after)
         org.junit.Assert.assertTrue("起始时间字段不应为空", after.isNotEmpty())
     }
+
+    @Test
+    fun 日期可以手动输入不补零的年月日() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("start_date_button").performClick()
+        composeRule.waitForIdle()
+
+        // 清空后填 2026 / 1 / 1：不补零也必须被接受
+        // （旧实现要求 2026/01/01，输入 2026/1/1 会被判非法）
+        composeRule.onNodeWithTag("date_year").performTextClearance()
+        composeRule.onNodeWithTag("date_year").performTextInput("2026")
+        composeRule.onNodeWithTag("date_month").performTextClearance()
+        composeRule.onNodeWithTag("date_month").performTextInput("1")
+        composeRule.onNodeWithTag("date_day").performTextClearance()
+        composeRule.onNodeWithTag("date_day").performTextInput("1")
+        composeRule.waitForIdle()
+
+        // 预览显示实际会被设成的日期
+        composeRule.onNodeWithText("2026 年 1 月 1 日", substring = true).assertExists()
+        composeRule.onNodeWithTag("date_confirm").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("日期 01-01", substring = true).assertExists()
+    }
+
+    @Test
+    fun 日期手动输入非法时不接受() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("start_date_button").performClick()
+        composeRule.waitForIdle()
+
+        // 2026 不是闰年
+        composeRule.onNodeWithTag("date_year").performTextClearance()
+        composeRule.onNodeWithTag("date_year").performTextInput("2026")
+        composeRule.onNodeWithTag("date_month").performTextClearance()
+        composeRule.onNodeWithTag("date_month").performTextInput("2")
+        composeRule.onNodeWithTag("date_day").performTextClearance()
+        composeRule.onNodeWithTag("date_day").performTextInput("29")
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("请填写合法的年月日", substring = true).assertExists()
+        composeRule.onNodeWithTag("date_cancel").performClick()
+        composeRule.waitForIdle()
+    }
+
+    @Test
+    fun 重复栏第一个按钮是单次() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+        // NONE 这一档叫「单次」，而不是和行标题重复的「重复」
+        composeRule.onNodeWithTag(TAG_RECURRENCE_PREFIX + "NONE").performScrollTo()
+        composeRule.onNodeWithTag(TAG_RECURRENCE_PREFIX + "NONE").assertIsDisplayed()
+        composeRule.onNodeWithText("单次").assertExists()
+    }
+
+    @Test
+    fun 日历视图有翻页与回到今天按钮且可翻页() {
+        composeRule.onNodeWithTag(TAG_TAB_WEEK).performClick()
+        composeRule.waitForIdle()
+
+        // 左右翻页按钮 + 回到今天
+        composeRule.onNodeWithTag(TAG_PERIOD_PREV).assertExists()
+        composeRule.onNodeWithTag(TAG_PERIOD_NEXT).assertExists()
+        composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).assertExists()
+
+        // 顶部标题记录了当前是哪一周
+        val before = periodLabelText()
+        composeRule.onNodeWithTag(TAG_PERIOD_NEXT).performClick()
+        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5_000) { periodLabelText() != before }
+
+        // 回到本周：保持周视图不变，标题恢复成当前这一周
+        // （不断言按钮上的文字：它在视口外时没有语义节点，按钮本身存在即可）
+        composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).assertExists()
+        composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).performClick()
+        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5_000) { periodLabelText() == before }
+        // 仍然是周视图（没有被"回到本周"切走）
+        composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
+    }
+
+    /** 读取顶部的时间范围标题。 */
+    private fun periodLabelText(): String =
+        composeRule.onNodeWithTag(TAG_PERIOD_LABEL)
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.Text]
+            .joinToString("") { it.text }
 
     @Test
     fun 起始时间的日期按钮存在且可点击() {

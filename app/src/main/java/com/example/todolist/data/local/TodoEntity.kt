@@ -32,6 +32,10 @@ data class TodoEntity(
     val weekDays: String,
     /** 月重复选中的号数，存 `1,15,31` 这样的列表。 */
     val monthDays: String,
+    /** 重复截止日期 yyyy-MM-dd；null 表示不限。 */
+    val recurrenceEndDate: String?,
+    /** 重复总次数；null 或 <=0 表示不限。 */
+    val recurrenceCount: Int?,
     /**
      * 例外日期，形如 `2026-10-12:SKIPPED,2026-10-19:SKIPPED`。
      * 用单个字段序列化而非建关联表：例外数量少，一次解析更简单。
@@ -56,6 +60,8 @@ fun TodoEntity.toDomain(): Todo = Todo(
     recurrence = enumValueOrDefault(recurrence, Recurrence.NONE),
     weekDays = parseWeekDays(weekDays),
     monthDays = parseMonthDays(monthDays),
+    recurrenceEndDate = recurrenceEndDate,
+    recurrenceCount = recurrenceCount,
     recurrenceExceptions = parseExceptions(recurrenceExceptions),
     parentId = parentId,
     isDone = isDone,
@@ -74,6 +80,8 @@ fun Todo.toEntity(): TodoEntity = TodoEntity(
     recurrence = recurrence.name,
     weekDays = serializeWeekDays(weekDays),
     monthDays = serializeMonthDays(monthDays),
+    recurrenceEndDate = recurrenceEndDate,
+    recurrenceCount = recurrenceCount,
     recurrenceExceptions = serializeExceptions(recurrenceExceptions),
     parentId = parentId,
     isDone = isDone,

@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.todolist.TodoApp
 import com.example.todolist.graphOrNull
+import com.example.todolist.notify.AlarmRingService
 import com.example.todolist.notify.NotificationHelper
 import com.example.todolist.ui.theme.TodolistTheme
 import kotlinx.coroutines.launch
@@ -77,24 +78,35 @@ class AlarmActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val todoId = intent.getLongExtra(EXTRA_TODO_ID, -1L)
-        startRinging()
+        // 正常情况下由 AlarmRingService 在响铃；只有被通知的全屏 Intent 直接拉起时
+        // （锁屏场景）才由本页自己补响，避免两处同时响。
+        if (!AlarmRingService.isRinging) {
+            // 服务没在响（例如由通知的全屏 Intent 直接拉起），本页自己补响
+            startRinging()
+        }
 
         setContent {
             TodolistTheme {
                 AlarmScreen(
                     todoId = todoId,
-                    onDismiss = { finish() },
+                    onDismiss = { dismissAlarm() },
                     onSnooze = { minutes ->
                         snooze(todoId, minutes)
-                        finish()
+                        dismissAlarm()
                     },
                     onComplete = {
                         complete(todoId)
-                        finish()
+                        dismissAlarm()
                     },
                 )
             }
         }
+    }
+
+    /** 用户处理完提醒：停掉铃声与服务，再关闭页面。 */
+    private fun dismissAlarm() {
+        AlarmRingService.stop(this)
+        finish()
     }
 
     override fun onDestroy() {

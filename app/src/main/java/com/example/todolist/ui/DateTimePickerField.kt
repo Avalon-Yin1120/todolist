@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
@@ -61,6 +65,8 @@ fun DateTimePickerField(
     onValueChange: (Long) -> Unit,
     modifier: Modifier = Modifier,
     tagPrefix: String = label,
+    /** 字段为空时，日期选择器默认落在哪一天 */
+    defaultDate: Long = System.currentTimeMillis(),
 ) {
     val zone = remember { ZoneId.systemDefault() }
     val local = value?.let { Instant.ofEpochMilli(it).atZone(zone) }
@@ -131,39 +137,16 @@ fun DateTimePickerField(
 
     if (showDatePicker) {
         // key = 打开次数：每次打开都从当前字段值重新初始化，而不是沿用上次的选中状态
-        val datePickerState = remember(dateOpenCount) {
-            initialDateMillis(local?.toLocalDate(), zone)
+        val initial = remember(dateOpenCount) {
+            local?.toLocalDate() ?: Instant.ofEpochMilli(defaultDate).atZone(zone).toLocalDate()
         }
-        val pickerState = rememberDatePickerState(
-            initialSelectedDateMillis = datePickerState,
-        )
-        AlertDialog(
-            onDismissRequest = { showDatePicker = false },
-            title = { Text("选择日期") },
-            text = {
-                // 用中文语境渲染日历：Material3 的日期/时间选择器文案取自
-                // LocalConfiguration，而不是应用里的硬编码字符串。
-                CompositionLocalProvider(LocalConfiguration provides ChineseConfiguration()) {
-                    DatePicker(state = pickerState)
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val picked = pickerState.selectedDateMillis
-                        if (picked != null) {
-                            applyDate(picked, local?.hour ?: DEFAULT_HOUR, local?.minute ?: 0)
-                        }
-                        showDatePicker = false
-                    },
-                    modifier = Modifier.testTag("date_confirm"),
-                ) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showDatePicker = false },
-                    modifier = Modifier.testTag("date_cancel"),
-                ) { Text("取消") }
+        DatePickerDialog(
+            initial = initial,
+            onDismiss = { showDatePicker = false },
+            onConfirm = { date ->
+                val utcMidnight = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+                applyDate(utcMidnight, local?.hour ?: DEFAULT_HOUR, local?.minute ?: 0)
+                showDatePicker = false
             },
         )
     }
@@ -294,4 +277,116 @@ private fun ChineseConfiguration(): Configuration {
             setLocale(Locale.SIMPLIFIED_CHINESE)
         }
     }
+}
+
+
+/**
+ * 日期选择对话框：日历 + 年月日三个独立输入框。
+ *
+ * 为什么不用 Material3 自带的文字输入模式：它严格按 Locale 短日期格式解析，
+ * 中文环境下要求 2026/01/01 这种补零写法，用户输入 2026/1/1 会被判为非法，
+ * 报错也不说明到底要什么格式。改成三个数字框后年月日各填各的，不再有格式歧义。
+ *
+ * 这里刻意不再由 AlertDialog 提供标题：Material3 的 DatePicker 自带
+ * 「选择日期」头部，外面再套一个标题会重复出现两次。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DatePickerDialog(
+    initial: LocalDate,
+    onDismiss: () -> Unit,
+    onConfirm: (LocalDate) -> Unit,
+) {
+    var yearText by remember { mutableStateOf(initial.year.toString()) }
+    var monthText by remember { mutableStateOf(initial.monthValue.toString()) }
+    var dayText by remember { mutableStateOf(initial.dayOfMonth.toString()) }
+
+    val parsed = DateFormats.parseDateParts(yearText, monthText, dayText)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                CompositionLocalProvider(LocalConfiguration provides ChineseConfiguration()) {
+                    DatePicker(
+                        state = rememberDatePickerState(
+                            initialSelectedDateMillis = initial
+                                .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+                        ),
+                        showModeToggle = false,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                Text("手动输入", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = yearText,
+                        onValueChange = { yearText = it.filter { c -> c.isDigit() }.take(4) },
+                        label = { Text("年") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1.4f)
+                            .testTag("date_year"),
+                    )
+                    OutlinedTextField(
+                        value = monthText,
+                        onValueChange = { monthText = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("月") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("date_month"),
+                    )
+                    OutlinedTextField(
+                        value = dayText,
+                        onValueChange = { dayText = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("日") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("date_day"),
+                    )
+                }
+                Text(
+                    text = if (parsed == null) {
+                        "请填写合法的年月日（例如 2026 / 1 / 1）"
+                    } else {
+                        "将设置为 " + DateFormats.fullDate(parsed)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (parsed == null) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.testTag("date_preview"),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { parsed?.let(onConfirm) },
+                enabled = parsed != null,
+                modifier = Modifier.testTag("date_confirm"),
+            ) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("date_cancel"),
+            ) { Text("取消") }
+        },
+    )
 }

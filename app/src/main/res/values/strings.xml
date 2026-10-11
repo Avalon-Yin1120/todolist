@@ -53,4 +53,9 @@
     <string name="notif_channel_name">待办提醒</string>
     <string name="notif_channel_desc">待办事项到点提醒</string>
     <string name="notif_content">时间：%1$s</string>
+
+    <!-- 闹钟式提醒的前台服务 -->
+    <string name="alarm_channel_name">闹钟式提醒</string>
+    <string name="alarm_channel_desc">闹钟式提醒正在响铃时的常驻通知</string>
+    <string name="alarm_ringing">闹钟式提醒正在响铃</string>
 </resources>

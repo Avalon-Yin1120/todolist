@@ -25,6 +25,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.remember
+import java.time.LocalDate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -62,6 +64,8 @@ import java.time.format.DateTimeFormatter
 fun TodoFormScreen(
     form: DraftFormStateHolder,
     isEditing: Boolean,
+    /** 是否来自「仅修改重复待办的这一次」 */
+    oneOffEdit: Boolean = false,
     onBack: () -> Unit,
     onSubmit: () -> Unit,
 ) {
@@ -70,7 +74,14 @@ fun TodoFormScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(if (isEditing) "编辑待办" else "新增待办", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = when {
+                            oneOffEdit -> "修改这一次"
+                            isEditing -> "编辑待办"
+                            else -> "新增待办"
+                        },
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 },
                 navigationIcon = {
                     IconButton(
@@ -91,6 +102,7 @@ fun TodoFormScreen(
     ) { padding ->
         TodoFormContent(
             form = form,
+            oneOffEdit = oneOffEdit,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(padding),
@@ -103,6 +115,7 @@ fun TodoFormScreen(
 fun TodoFormContent(
     form: DraftFormStateHolder,
     modifier: Modifier = Modifier,
+    oneOffEdit: Boolean = false,
 ) {
     val state by form.state.collectAsStateWithLifecycle()
     val errors by form.errors.collectAsStateWithLifecycle()
@@ -228,7 +241,8 @@ fun TodoFormContent(
                 FilterChip(
                     selected = state.recurrence == option,
                     onClick = { form.setRecurrence(option) },
-                    label = { Text(RecurrenceExpander.describe(option).removePrefix("不")) },
+                    // NONE 显示为「单次」：按钮标题写「重复」会和整行标题重复，也不像个选项
+                    label = { Text(recurrenceChipLabel(option)) },
                     modifier = Modifier
                         .weight(1f)
                         .testTag(TAG_RECURRENCE_PREFIX + option.name),
@@ -308,6 +322,7 @@ fun TodoFormContent(
         }
 
         if (state.recurrence.isRecurring) {
+            RecurrenceRangeSection(form = form, state = state)
             Text(
                 text = "重复待办修改或删除时会询问：仅这一次，还是整个系列",
                 style = MaterialTheme.typography.bodySmall,
@@ -316,6 +331,132 @@ fun TodoFormContent(
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * 重复的起止范围：截止日期与重复次数。
+ *
+ * 两者联动——改任意一个，另一个立刻跟着算出来，避免出现
+ * 「填了 10 次又填了截止到明年」这种自相矛盾的输入。
+ */
+@Composable
+private fun RecurrenceRangeSection(
+    form: DraftFormStateHolder,
+    state: DraftFormState,
+) {
+    val zone = remember { ZoneId.systemDefault() }
+    val start = state.startAt
+    val startDate = start?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+
+    /** 用于推算的临时 Todo：只要有规则、起始时间与选中的日子即可。 */
+    fun draftTodo(): Todo? {
+        val s = start ?: return null
+        return Todo(
+            name = "",
+            startAt = s,
+            endAt = state.endAt ?: s,
+            recurrence = state.recurrence,
+            weekDays = state.weekDays,
+            monthDays = state.monthDays,
+        )
+    }
+
+    val countText = state.recurrenceCount?.toString().orEmpty()
+    val endText = state.recurrenceEndDate.orEmpty()
+
+    Text(
+        text = "重复范围",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = countText,
+            onValueChange = { raw ->
+                val digits = raw.filter { it.isDigit() }.take(4)
+                val count = digits.toIntOrNull()
+                form.setRecurrenceCount(count)
+                // 次数 -> 截止日期：联动算出最后一场的日期
+                val todo = draftTodo()
+                if (count != null && count > 0 && todo != null) {
+                    val end = RecurrenceExpander.endDateForCount(todo, count, zone)
+                    form.setRecurrenceEndDate(end?.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                }
+            },
+            label = { Text("重复次数") },
+            placeholder = { Text("不限") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .weight(1f)
+                .testTag(TAG_RECURRENCE_COUNT),
+        )
+        OutlinedTextField(
+            value = endText,
+            onValueChange = { raw -> /* 只读，用右侧按钮改 */ },
+            readOnly = true,
+            label = { Text("截止日期") },
+            placeholder = { Text("不限") },
+            singleLine = true,
+            modifier = Modifier
+                .weight(1.2f)
+                .testTag(TAG_RECURRENCE_END),
+        )
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedButton(
+            onClick = {
+                // 截止日期 -> 次数：按当前规则数出到该日期为止总共有几场
+                val todo = draftTodo() ?: return@OutlinedButton
+                val end = state.recurrenceEndDate?.let {
+                    runCatching { LocalDate.parse(it, DateTimeFormatter.ISO_LOCAL_DATE) }.getOrNull()
+                } ?: startDate?.plusMonths(1) ?: return@OutlinedButton
+                form.setRecurrenceCount(RecurrenceExpander.countUntil(todo, end, zone))
+            },
+            modifier = Modifier
+                .weight(1f)
+                .testTag(TAG_RECURRENCE_SYNC),
+        ) { Text("按截止日期算次数") }
+
+        OutlinedButton(
+            onClick = { form.setRecurrenceEndDate(null) },
+            modifier = Modifier.weight(1f),
+            enabled = endText.isNotEmpty(),
+        ) { Text("清除截止") }
+    }
+    Text(
+        text = buildString {
+            append("起始 ")
+            append(startDate?.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) ?: "—")
+            append("，")
+            append(
+                when {
+                    state.recurrenceCount != null && endText.isNotEmpty() ->
+                        "共 ${state.recurrenceCount} 次，最后一场 $endText"
+                    state.recurrenceCount != null -> "共 ${state.recurrenceCount} 次"
+                    endText.isNotEmpty() -> "截止 $endText"
+                    else -> "不限次数与截止日期"
+                },
+            )
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.testTag(TAG_RECURRENCE_SUMMARY),
+    )
+}
+
+/** 周期按钮的文案。 */
+private fun recurrenceChipLabel(option: Recurrence): String = when (option) {
+    Recurrence.NONE -> "单次"
+    Recurrence.DAILY -> "每天"
+    Recurrence.WEEKLY -> "每周"
+    Recurrence.MONTHLY -> "每月"
 }
 
 private val QUICK_LEADS = listOf(0, 5, 30, 60, 1440)

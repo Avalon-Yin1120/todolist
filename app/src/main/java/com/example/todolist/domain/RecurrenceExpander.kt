@@ -37,7 +37,23 @@ object RecurrenceExpander {
             return startDate == date
         }
         if (date.isBefore(startDate)) return false
-        return when (todo.recurrence) {
+        // 截止日期是硬边界：超过就彻底不再出现
+        todo.recurrenceEndDate?.let { end ->
+            runCatching { LocalDate.parse(end, DATE_FORMATTER) }.getOrNull()?.let {
+                if (date.isAfter(it)) return false
+            }
+        }
+        if (!matchesRule(todo, date, startDate)) return false
+        // 次数限制：从第一场数到这一场，超过总数就不再出现
+        todo.recurrenceCount?.let { limit ->
+            if (limit > 0 && occurrenceIndex(todo, date, zone, startDate) >= limit) return false
+        }
+        return true
+    }
+
+    /** 只判断规则本身（星期/号数/每天），不含例外、截止与次数。 */
+    private fun matchesRule(todo: Todo, date: LocalDate, startDate: LocalDate): Boolean =
+        when (todo.recurrence) {
             Recurrence.DAILY -> true
             // 周重复按用户选中的星期几判断；没选过则回落到开始日期的星期
             Recurrence.WEEKLY -> effectiveWeekDays(todo, startDate).contains(date.dayOfWeek)
@@ -45,6 +61,61 @@ object RecurrenceExpander {
             Recurrence.MONTHLY -> occursOnSelectedMonthDay(todo, startDate, date)
             Recurrence.NONE -> startDate == date
         }
+
+    /**
+     * [date] 是第几场（从 0 开始数第一场）。
+     *
+     * 只统计符合规则的日期，忽略例外——次数限制的语义是「总共排几次」，
+     * 用户手动跳过某一次不应该让后面的场次顺延。
+     */
+    fun occurrenceIndex(todo: Todo, date: LocalDate, zone: ZoneId, startDate: LocalDate): Int {
+        var index = 0
+        var cursor = startDate
+        while (cursor.isBefore(date)) {
+            if (matchesRule(todo, cursor, startDate)) index++
+            cursor = cursor.plusDays(1)
+        }
+        return index
+    }
+
+    /**
+     * 由「重复次数」反推截止日期。
+     *
+     * 界面上次数与截止日期是联动的：用户改任意一个，另一个立刻跟着确定，
+     * 避免「既填了 10 次又填了截止到明年」这种自相矛盾的输入。
+     * 达到 [MAX_SEARCH_DAYS] 仍未数满（例如选了 31 号而中间全是小月）就停止。
+     */
+    fun endDateForCount(
+        todo: Todo,
+        count: Int,
+        zone: ZoneId,
+        searchDays: Int = 4000,
+    ): LocalDate? {
+        if (!todo.recurrence.isRecurring || count <= 0) return null
+        val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
+        var seen = 0
+        var cursor = startDate
+        repeat(searchDays) {
+            if (matchesRule(todo, cursor, startDate)) {
+                seen++
+                if (seen == count) return cursor
+            }
+            cursor = cursor.plusDays(1)
+        }
+        return cursor.minusDays(1)
+    }
+
+    /** 由「截止日期」反推重复次数（含第一次）。 */
+    fun countUntil(todo: Todo, endDate: LocalDate, zone: ZoneId): Int {
+        if (!todo.recurrence.isRecurring) return 1
+        val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
+        var seen = 0
+        var cursor = startDate
+        while (!cursor.isAfter(endDate)) {
+            if (matchesRule(todo, cursor, startDate)) seen++
+            cursor = cursor.plusDays(1)
+        }
+        return seen.coerceAtLeast(1)
     }
 
     /**

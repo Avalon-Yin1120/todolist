@@ -62,15 +62,62 @@ object CalendarLayout {
         }.sortedBy { it.startAt }
 
     /**
-     * 某一天的忙碌时长（毫秒）。用于月视图红色深浅。
+     * 某一天的忙碌时长（毫秒）。
+     *
+     * 会把重叠的时间段合并，避免「两个待办各 1 小时但完全重叠」被算成 2 小时。
      */
     fun busyDurationMillis(todos: List<Todo>, date: LocalDate, zone: ZoneId): Long =
-        todosOn(todos, date, zone).sumOf { (it.endAt - it.startAt).coerceAtLeast(0L) }
+        (busyHours(todos, date, zone) * 3_600_000.0).toLong()
+
+    /** 一天内的忙碌区间，以「从当天 00:00 起的小时数」表示，已裁剪到当天范围。 */
+    fun busySpans(todos: List<Todo>, date: LocalDate, zone: ZoneId): List<Pair<Double, Double>> {
+        val dayStart = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        return todosOn(todos, date, zone).mapNotNull { todo ->
+            val start = ((maxOf(todo.startAt, dayStart) - dayStart) / 3_600_000.0)
+                .coerceIn(0.0, HOURS_PER_DAY.toDouble())
+            val end = ((minOf(todo.endAt, dayStart + 24 * 3_600_000L) - dayStart) / 3_600_000.0)
+                .coerceIn(0.0, HOURS_PER_DAY.toDouble())
+            if (end > start) start to end else null
+        }.sortedBy { it.first }
+    }
+
+    /** 合并重叠区间。 */
+    fun mergeSpans(spans: List<Pair<Double, Double>>): List<Pair<Double, Double>> {
+        if (spans.isEmpty()) return emptyList()
+        val result = mutableListOf<Pair<Double, Double>>()
+        var current = spans.first()
+        spans.drop(1).forEach { span ->
+            current = if (span.first <= current.second) {
+                current.first to maxOf(current.second, span.second)
+            } else {
+                result += current
+                span
+            }
+        }
+        result += current
+        return result
+    }
+
+    /** 某一天的忙碌小时数（重叠已合并）。 */
+    fun busyHours(todos: List<Todo>, date: LocalDate, zone: ZoneId): Double =
+        mergeSpans(busySpans(todos, date, zone)).sumOf { it.second - it.first }
 
     /**
-     * 月视图的颜色档位：0 表示没有待办，1..4 表示忙碌程度递增。
+     * 月视图的深浅强度，连续取值 0..1（不再分档）。
      *
-     * 用「小时数」分档而不是精确毫秒：颜色只需表达相对多少，分档更稳定也更易读。
+     * 用平方根而不是线性：绝大多数日子只忙一两小时，线性映射会让它们
+     * 全部挤在最浅的一档、看不出差别；开方后低区间被拉开，高区间趋于饱和。
+     */
+    fun busyIntensity(hours: Double): Float {
+        if (hours <= 0.0) return 0f
+        return kotlin.math.sqrt((hours / SATURATION_HOURS).coerceIn(0.0, 1.0)).toFloat()
+    }
+
+    /** 强度达到 1 所需的小时数：一天忙满 10 小时就算最深。 */
+    const val SATURATION_HOURS = 10.0
+
+    /**
+     * 兼容旧调用：仍然给出 0..4 的档位（图例与既有测试使用）。
      */
     fun busyLevel(hours: Double): Int = when {
         hours <= 0.0 -> 0

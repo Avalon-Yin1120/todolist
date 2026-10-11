@@ -42,6 +42,13 @@ enum class ListGrouping { BY_TIME, BY_DONE }
 data class EditState(
     val isOpen: Boolean = false,
     val editingId: Long = 0L,
+    /**
+     * 「仅修改这一次」的来源重复待办 id。
+     *
+     * 非 0 表示：保存时要新建一条独立待办，并在来源规则上把这一天标记为例外。
+     * 保存前不写库，所以用户中途返回不会留下多余记录。
+     */
+    val oneOffSourceId: Long = 0L,
 )
 
 /** 需要用户确认或注意的一次性交互。 */
@@ -85,6 +92,8 @@ data class TodoUiState(
     val settings: SettingsUiState = SettingsUiState(),
     /** 表单是否打开（整屏表单页），供界面判断是否需要初始聚焦等行为 */
     val formOpen: Boolean = false,
+    /** 当前表单是否来自「仅修改重复待办的这一次」 */
+    val oneOffEdit: Boolean = false,
     /** 周期待办「仅修改本次」时的场次时间。 */
     val pendingOccurrenceStart: Long = 0L,
     /** 正在处理的重复待办原始副本，供「仅修改本次」构造独立记录。 */
@@ -145,6 +154,7 @@ class TodoViewModel(
             selectedDate = local.selectedDate,
             grouping = local.grouping,
             screen = if (edit.isOpen) Screen.FORM else local.screen,
+            oneOffEdit = edit.oneOffSourceId != 0L,
             formOpen = edit.isOpen,
             settings = local.settings,
             pendingOccurrenceStart = local.pendingOccurrenceStart,
@@ -221,8 +231,37 @@ class TodoViewModel(
             leadMinutes = todo.leadMinutes,
             mode = todo.mode,
             recurrence = todo.recurrence,
+            weekDays = todo.weekDays,
+            monthDays = todo.monthDays,
+            recurrenceEndDate = todo.recurrenceEndDate,
+            recurrenceCount = todo.recurrenceCount,
         )
         editState.value = EditState(isOpen = true, editingId = todo.id)
+    }
+
+    /**
+     * 打开「仅修改重复待办的这一次」的表单。
+     *
+     * 关键点：**不预先落库**。早先的实现是先 create 一条独立待办再打开编辑表单，
+     * 用户点「返回」不保存时那条记录已经存在了，表现为「只是想改一下却多出一条待办」。
+     * 现在只把表单预填好并记住来源，等用户真的点保存时才写库。
+     */
+    fun openOneOffEditForm(source: Todo, occurrenceStart: Long) {
+        val duration = source.endAt - source.startAt
+        form.open(
+            id = 0L,
+            name = source.name,
+            startAt = occurrenceStart,
+            endAt = occurrenceStart + duration,
+            leadMinutes = source.leadMinutes,
+            mode = source.mode,
+            recurrence = Recurrence.NONE,
+        )
+        editState.value = EditState(
+            isOpen = true,
+            editingId = 0L,
+            oneOffSourceId = source.id,
+        )
     }
 
     fun dismissForm() {
@@ -235,6 +274,7 @@ class TodoViewModel(
         if (form.validate().isNotEmpty()) return
 
         val draft = form.toDraft()
+        val oneOffSourceId = editState.value.oneOffSourceId
         viewModelScope.launch {
             // 记住这次的提前量，下次新建时作为默认值
             settings.lastLeadMinutes = draft.leadMinutes
@@ -243,6 +283,11 @@ class TodoViewModel(
                 coordinator.create(draft)
             } else {
                 coordinator.update(draft)
+            }
+            // 「仅修改这一次」：独立待办保存成功后，才在来源规则上把这一天标记为例外，
+            // 避免同一天既出现原规则的场次、又出现这条独立待办
+            if (oneOffSourceId != 0L) {
+                coordinator.skipOccurrence(oneOffSourceId, draft.startAt)
             }
             if (result != null) {
                 // 提示优先级：降级（闹钟式退化为通知）> 时间段冲突 > 保存成功。
@@ -317,24 +362,9 @@ class TodoViewModel(
                 if (entireSeries) {
                     openEditFormDirect(todo)
                 } else {
-                    viewModelScope.launch {
-                        // 把这一次落成独立待办：复制一份、清掉周期、指向原规则
-                        val duration = todo.endAt - todo.startAt
-                        val result = coordinator.create(
-                            TodoDraft(
-                                name = todo.name,
-                                startAt = local.pendingOccurrenceStart,
-                                endAt = local.pendingOccurrenceStart + duration,
-                                leadMinutes = todo.leadMinutes,
-                                mode = todo.mode,
-                                recurrence = Recurrence.NONE,
-                            )
-                        )
-                        // 原规则上把这一天标为例外，避免同一天出现两条
-                        coordinator.skipOccurrence(todo.id, local.pendingOccurrenceStart)
-                        updateLocal { it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L) }
-                        coordinator.findById(result.todoId)?.let { openEditFormDirect(it) }
-                    }
+                    // 只预填表单，不落库：用户若点「返回」就什么都不该留下
+                    openOneOffEditForm(todo, local.pendingOccurrenceStart)
+                    updateLocal { it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L) }
                 }
             }
         }

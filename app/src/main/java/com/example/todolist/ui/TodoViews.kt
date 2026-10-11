@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -70,13 +72,39 @@ object TodoColors {
         }
     }
 
-    /** 月视图的红色深浅：档位越高表示当天越忙。 */
+    /** 月视图的红色深浅：档位越高表示当天越忙（图例用）。 */
     fun monthLevelColor(level: Int): Color = when (level) {
         0 -> Color(0x00000000)
         1 -> Color(0x33EF4444)
         2 -> Color(0x66EF4444)
         3 -> Color(0xAAEF4444)
         else -> Color(0xFFDC2626)
+    }
+
+    /**
+     * 月视图的连续深浅：按忙碌小时数在「近白」与「深红」之间平滑插值，
+     * 不再落到固定几档，于是 1 小时和 2.5 小时看起来也是不同的。
+     */
+    fun monthSmoothColor(hours: Double): Color {
+        val t = CalendarLayout.busyIntensity(hours)
+        if (t <= 0f) return Color(0x00000000)
+        return lerp(Color(0xFFFDE7E7), Color(0xFFDC2626), t)
+    }
+
+    /**
+     * 按比例在 [from] 与 [to] 之间取色。
+     *
+     * Compose 的 [androidx.compose.ui.graphics.lerp] 只接受 Color.lerp 扩展，
+     * 这里显式做分量插值，便于在单测里直接断言。
+     */
+    fun lerp(from: Color, to: Color, t: Float): Color {
+        val f = t.coerceIn(0f, 1f)
+        return Color(
+            red = from.red + (to.red - from.red) * f,
+            green = from.green + (to.green - from.green) * f,
+            blue = from.blue + (to.blue - from.blue) * f,
+            alpha = from.alpha + (to.alpha - from.alpha) * f,
+        )
     }
 }
 
@@ -181,25 +209,43 @@ fun WeeklyView(
                     }
                 }
             }
-            // 7 天 × 24 小时的格子
+            // 7 天 × 24 小时的底格 + 按时间比例精准填充的色块
+            val dayHeight = HOUR_CELL_HEIGHT * CalendarLayout.HOURS_PER_DAY
+            // 每小时的显示高度，用于把「小时」换算成「dp」
+            val hourHeight = HOUR_CELL_HEIGHT
             weekDates.forEach { date ->
-                Column(
+                Box(
                     modifier = Modifier
                         .weight(1f)
+                        .height(dayHeight)
                         .clickable { onPickDate(date) },
                 ) {
-                    (0 until CalendarLayout.HOURS_PER_DAY).forEach { hour ->
-                        val busy = CalendarLayout.hasTodoInHour(todos, date, hour, zone)
+                    // 底格：每小时一格，只作视觉刻度
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        (0 until CalendarLayout.HOURS_PER_DAY).forEach { hour ->
+                            Box(
+                                modifier = Modifier
+                                    .height(HOUR_CELL_HEIGHT)
+                                    .fillMaxWidth()
+                                    .padding(1.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    ),
+                            )
+                        }
+                    }
+                    // 色块：起点与高度都按真实时刻计算，因此半小时的事就占半格，
+                    // 而不是把整格填满——这正是「按时间比例精准填充」的含义。
+                    CalendarLayout.busySpans(todos, date, zone).forEach { (startHour, endHour) ->
                         Box(
                             modifier = Modifier
-                                .height(HOUR_CELL_HEIGHT)
+                                .padding(horizontal = 1.dp)
+                                .offset(y = hourHeight * startHour.toFloat())
                                 .fillMaxWidth()
-                                .padding(1.dp)
+                                .height(hourHeight * (endHour - startHour).toFloat())
                                 .clip(RoundedCornerShape(2.dp))
-                                .background(
-                                    if (busy) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                                ),
+                                .background(MaterialTheme.colorScheme.primary),
                         )
                     }
                 }
@@ -244,16 +290,16 @@ fun MonthlyView(
             ) {
                 week.forEach { date ->
                     val inMonth = YearMonth.from(date) == month
-                    val busyMillis = CalendarLayout.busyDurationMillis(todos, date, zone)
-                    val level = CalendarLayout.busyLevel(busyMillis / 3_600_000.0)
-                    val hasAny = busyMillis > 0
+                    val busyHours = CalendarLayout.busyHours(todos, date, zone)
+                    val level = CalendarLayout.busyLevel(busyHours)
+                    val hasAny = busyHours > 0
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
                             .padding(2.dp)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(TodoColors.monthLevelColor(level))
+                            .background(TodoColors.monthSmoothColor(busyHours))
                             .border(
                                 width = if (date == today) 2.dp else 0.dp,
                                 color = if (date == today) {
@@ -290,12 +336,14 @@ fun MonthlyView(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text("空闲", style = MaterialTheme.typography.labelSmall)
-            (0..4).forEach { level ->
+            // 图例按色带取样，与单元格的连续深浅保持一致
+            (0..4).forEach { step ->
+                val hours = CalendarLayout.SATURATION_HOURS * (step / 4.0).let { it * it }
                 Box(
                     modifier = Modifier
                         .size(14.dp)
                         .clip(CircleShape)
-                        .background(TodoColors.monthLevelColor(level))
+                        .background(TodoColors.monthSmoothColor(hours))
                         .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
                 )
             }
