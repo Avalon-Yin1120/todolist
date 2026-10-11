@@ -29,7 +29,8 @@ $versions = @(
     @{ Ver = 'v7'; Commit = '8309ac2'; Label = '验证切换动画' },
     @{ Ver = 'v8'; Commit = '86609c9'; Label = '修复14项含闹钟滑动日期' },
     @{ Ver = 'v9'; Commit = '8299a55'; Label = '重复生效起始日与次数互算' },
-    @{ Ver = 'v10'; Commit = '755018d'; Label = '自绘日历与翻页修复' }
+    @{ Ver = 'v10'; Commit = '755018d'; Label = '自绘日历与翻页修复' },
+    @{ Ver = 'v11'; Commit = '5d058cd'; Label = '闹钟后台不出声修复' }
 )
 
 Set-Location $Repo
