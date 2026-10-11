@@ -52,6 +52,8 @@ import com.example.todolist.ui.TAG_TODO_CHECKBOX
 import com.example.todolist.ui.TAG_TODO_ROW
 import com.example.todolist.ui.tagForTodo
 import kotlinx.coroutines.runBlocking
+import java.time.DayOfWeek
+import java.time.LocalDate
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -123,6 +125,17 @@ class TodoListUiTest {
     }
 
     /**
+     * 切到「待办」页。
+     *
+     * 应用默认进日视图，只显示当天的事项；而这些用例要操作的是总列表（含未来事项），
+     * 必须先切到「待办」页，行的删除/勾选按钮才在组合范围里。
+     */
+    private fun gotoListTab() {
+        composeRule.onNodeWithTag(TAG_TAB_TODO).performClick()
+        composeRule.waitForIdle()
+    }
+
+    /**
      * 把整屏表单向下滚一段。
      *
      * 用语义滚动动作而不是注入触摸：Compose 只为视口内的内容建立语义节点，
@@ -175,6 +188,7 @@ class TodoListUiTest {
     fun 新增一条待办后出现在列表中() {
         val name = unique("写代码")
         val id = addTodo(name)
+        gotoListTab()
 
         composeRule.onNodeWithText(name).assertIsDisplayed()
         composeRule.onNodeWithTag(tagForTodo(TAG_TODO_ROW, id)).assertIsDisplayed()
@@ -284,20 +298,32 @@ class TodoListUiTest {
         composeRule.onNodeWithTag(TAG_PERIOD_NEXT).assertExists()
         composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).assertExists()
 
-        // 顶部标题记录了当前是哪一周
+        // 翻页按钮确实改变了「当前是哪一周」
         val before = periodLabelText()
         composeRule.onNodeWithTag(TAG_PERIOD_NEXT).performClick()
-        composeRule.waitForIdle()
-        composeRule.waitUntil(timeoutMillis = 5_000) { periodLabelText() != before }
+        composeRule.waitUntil(timeoutMillis = 8_000) { periodLabelText() != before }
 
-        // 回到本周：保持周视图不变，标题恢复成当前这一周
-        // （不断言按钮上的文字：它在视口外时没有语义节点，按钮本身存在即可）
-        composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).assertExists()
+        // 「回到本周」应回到今天所在的那一周。
+        //
+        // 这里比对的是「今天那一周」而不是翻页前的文字：翻页后上层日期已经跟着变了，
+        // 而且动画过程中读标签会拿到中间态，比对文案容易偶发失败。
         composeRule.onNodeWithTag(TAG_BACK_TO_TODAY).performClick()
-        composeRule.waitForIdle()
-        composeRule.waitUntil(timeoutMillis = 5_000) { periodLabelText() == before }
+        composeRule.waitUntil(timeoutMillis = 8_000) {
+            periodLabelText() == weekLabelOf(LocalDate.now())
+        }
         // 仍然是周视图（没有被"回到本周"切走）
         composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
+    }
+
+    /** 某一天所在那一周的标题，与界面上的写法一致。 */
+    private fun weekLabelOf(date: LocalDate): String {
+        val start = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val end = start.plusDays(6)
+        return if (start.year == end.year && start.month == end.month) {
+            "${start.monthValue} 月 ${start.dayOfMonth} 日 - ${end.dayOfMonth} 日"
+        } else {
+            "${start.monthValue} 月 ${start.dayOfMonth} 日 - ${end.monthValue} 月 ${end.dayOfMonth} 日"
+        }
     }
 
     /** 读取顶部的时间范围标题。 */
@@ -378,6 +404,7 @@ class TodoListUiTest {
     @Test
     fun 勾选后展示已完成状态() {
         val id = addTodo(unique("勾选验证"), beforeSave = { setStartToNow() })
+        gotoListTab()
         val checkboxTag = tagForTodo(TAG_TODO_CHECKBOX, id)
 
         // 勾选前应为未选中
@@ -412,6 +439,7 @@ class TodoListUiTest {
         composeRule.onNodeWithTag(TAG_SAVE_BUTTON).performClick()
         composeRule.waitForIdle()
         val id = (currentTodoIds() - before).single()
+        gotoListTab()
 
         // 该行的徽章里应出现「闹钟」
         composeRule.onNode(
@@ -430,6 +458,7 @@ class TodoListUiTest {
         composeRule.waitForIdle()
 
         // 未来的待办不能标记完成：应显示「未开始」而不是勾选框
+        gotoListTab()
         // 用 assertExists 而不是 assertIsDisplayed：新行会加到列表末尾，可能不在视口内
         composeRule.onAllNodesWithText("未开始")[0].assertExists()
     }
@@ -465,6 +494,7 @@ class TodoListUiTest {
     @Test
     fun 删除待办会先弹确认框() {
         val id = addTodo(unique("待删除"))
+        gotoListTab()
 
         composeRule.onNodeWithTag(tagForTodo(TAG_TODO_DELETE, id)).performClick()
         composeRule.waitForIdle()
@@ -480,6 +510,7 @@ class TodoListUiTest {
     @Test
     fun 确认后删除待办() {
         val id = addTodo(unique("确认删除"))
+        gotoListTab()
 
         composeRule.onNodeWithTag(tagForTodo(TAG_TODO_DELETE, id)).performClick()
         composeRule.waitForIdle()

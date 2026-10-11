@@ -26,6 +26,8 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.derivedStateOf
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -611,71 +613,42 @@ private fun CalendarPager(
     content: @Composable (LocalDate) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    /**
-     * 锚点：页码与日期的换算基准。
-     *
-     * 进入视图时取当前选中日期，之后**每次滑停或翻页都把锚点对齐到当前页**，
-     * 于是 MIDDLE 永远是「现在这一页」，页码不会随会话累积偏移。
-     * 与「一页」对齐（周=周一、月=1 号），保证 pageOf(dateOf(page)) == page。
-     */
-    fun aligned(date: LocalDate): LocalDate = when (tab) {
-        NavTab.WEEK -> CalendarLayout.weekStart(date)
-        NavTab.MONTH -> date.withDayOfMonth(1)
-        else -> date
-    }
-    var anchor by remember(tab) { mutableStateOf(aligned(selectedDate)) }
     val pagerState = rememberPagerState(initialPage = MIDDLE, pageCount = { PAGE_COUNT })
 
-    fun dateOf(page: Int): LocalDate = when (tab) {
-        NavTab.WEEK -> anchor.plusWeeks((page - MIDDLE).toLong())
-        NavTab.MONTH -> anchor.plusMonths((page - MIDDLE).toLong())
-        else -> anchor.plusDays((page - MIDDLE).toLong())
-    }
-
-    fun pageOf(date: LocalDate): Int = when (tab) {
-        NavTab.WEEK -> MIDDLE + java.time.temporal.ChronoUnit.WEEKS.between(
-            anchor,
-            CalendarLayout.weekStart(date),
-        ).toInt()
-        NavTab.MONTH -> MIDDLE + java.time.temporal.ChronoUnit.MONTHS.between(
-            java.time.YearMonth.from(anchor),
-            java.time.YearMonth.from(date),
-        ).toInt()
-        else -> MIDDLE + java.time.temporal.ChronoUnit.DAYS.between(anchor, date).toInt()
-    }
+    // 当前显示的这一期，直接由 pager 的当前位置推导。
+    // 不在函数里开任何可变的「锚点」状态，避免映射随会话漂移。
+    val shownDate = dateOfPage(tab, pagerState.currentPage)
 
     /**
-     * 当前显示的这一期，跟随 [PagerState.currentPage]。
+     * 唯一的滚动入口。
      *
-     * 显式维护而不是用 derivedStateOf：`anchor` 是本函数的局部 `var`（经 mutableStateOf 委托），
-     * derivedStateOf 的闭包会捕获**旧的** anchor，算出的日期差一整期，
-     * 于是「翻页」按钮第二次点击会算回同一页，表现为只翻得动一次。
-     *
-     * 数据流是单向的：只由 pager 的位置推导，没有「上层状态变了就滚回去」的回写。
+     * 之前「按钮」和「上层 selectedDate 变化的效应」各自调 animateScrollToPage，
+     * 两个动画互相打断，表现就是翻一下卡住、或者像到了尽头。
+     * 现在全部走这里，并且：
+     * * 已经在目标页就直接返回，不再发起动画（避免自我打断）；
+     * * 用 Mutex 串行化，保证同一时刻只有一个滚动动画在跑。
      */
-    var shownDate by remember(tab) { mutableStateOf(aligned(selectedDate)) }
-
-    // 页变了：锚点跟进到当前页（MIDDLE 永远是「现在这一页」），并通知上层更新倒计时
-    LaunchedEffect(tab, pagerState.currentPage) {
-        val current = dateOf(pagerState.currentPage)
-        if (aligned(current) != anchor) anchor = aligned(current)
-        shownDate = current
-        onDisplay(current)
-    }
-
-    /** 翻到某一期：只驱动 pager，上层通过 onDisplay 得到通知。 */
-    fun goTo(date: LocalDate) {
-        val target = pageOf(date).coerceIn(0, PAGE_COUNT - 1)
-        scope.launch { pagerState.animateScrollToPage(target) }
-    }
-
-    /** 相对当前页前后翻一期。 */
-    fun stepPage(delta: Int) {
+    val scrollMutex = remember { Mutex() }
+    fun scrollToPage(target: Int) {
+        val clamped = target.coerceIn(0, PAGE_COUNT - 1)
         scope.launch {
-            pagerState.animateScrollToPage(
-                (pagerState.currentPage + delta).coerceIn(0, PAGE_COUNT - 1),
-            )
+            scrollMutex.withLock {
+                if (clamped != pagerState.currentPage) {
+                    runCatching { pagerState.animateScrollToPage(clamped) }
+                }
+            }
         }
+    }
+
+    // 页变了就通知上层（更新倒计时、以及切回视图时用哪个日期）
+    LaunchedEffect(tab, pagerState.currentPage) {
+        onDisplay(dateOfPage(tab, pagerState.currentPage))
+    }
+
+    // 上层要求看某一天（点某天跳转、从别的视图切过来）：滚到对应页。
+    // 已经在目标页时 scrollToPage 会直接返回，所以不会和上面的通知形成回环。
+    LaunchedEffect(tab, selectedDate) {
+        scrollToPage(pageOfDate(tab, selectedDate))
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -693,12 +666,12 @@ private fun CalendarPager(
                 NavTab.MONTH -> "回到本月"
                 else -> "回到今天"
             },
-            // 用相对页码而不是「当前日期 ± 1 期」：onClick 的 lambda 会缓存
-            // 组合时的 anchor/shownDate，翻页后仍按旧值算，于是算回同一页、翻不动。
-            // pagerState 是稳定对象，currentPage 每次都取最新值。
-            onPrevious = { stepPage(-1) },
-            onNext = { stepPage(1) },
-            onBackToToday = { goTo(today) },
+            // 用页码加减，不用「当前日期 ± 1 期」再反算页码：
+            // 后者多一次换算，onClick 的 lambda 还会缓存组合时的日期。
+            onPrevious = { scrollToPage(pagerState.currentPage - 1) },
+            onNext = { scrollToPage(pagerState.currentPage + 1) },
+            // 「回到今天」就是滚到今天所在页，同样走唯一入口
+            onBackToToday = { scrollToPage(pageOfDate(tab, today)) },
         )
         HorizontalPager(
             state = pagerState,
@@ -706,8 +679,69 @@ private fun CalendarPager(
                 .fillMaxSize()
                 .testTag(TAG_SWIPE_AREA),
         ) { page ->
-            content(dateOf(page))
+            content(dateOfPage(tab, page))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 页 <-> 日期 的换算：绝对基准，纯函数
+//
+// 之前用「可变锚点 + 页码偏移」做两次换算，锚点还会在翻页时被改写，
+// 于是映射随会话漂移，出现「左滑日期不变」「好像翻到头了」这类问题。
+// 现在页 0 固定对应 EPOCH（2000-01-01，恰好是周六），
+// 页与日期互为反函数，不受任何会话状态影响：
+//
+//     dateOfPage(tab, pagerState.currentPage)   当前显示哪一期
+//     pageOfDate(tab, 某个日期)                  该跳到第几页
+//
+// 三个粒度分别用 ChronoUnit 的 DAYS / WEEKS / MONTHS 度量；
+// 周对齐到周一、月对齐到 1 号，因此 pageOfDate 对同一期内的任意一天返回同一个页码。
+// ---------------------------------------------------------------------------
+
+/** 页 0 对应的日期。选 2000-01-01 只是为了远离实际使用范围，避免触到两端。 */
+private val PAGE_EPOCH: LocalDate = LocalDate.of(2000, 1, 1)
+
+/**
+ * 周视图的页 0 基准：必须是**周一**。
+ *
+ * 2000-01-01 是周六，直接拿它当基准会让「第 N 週」落在周六上，
+ * 与「周对齐到周一」的自洽性冲突，导致 pageOfDate(dateOfPage(p)) != p，
+ * 表现为翻页方向漂移、有时像是翻不动。2000-01-03 才是那一周的周一。
+ */
+private val WEEK_EPOCH: LocalDate = LocalDate.of(2000, 1, 3)
+
+/** 页与日期换算用到的粒度。 */
+private fun chronoUnitFor(tab: NavTab): java.time.temporal.ChronoUnit = when (tab) {
+    NavTab.WEEK -> java.time.temporal.ChronoUnit.WEEKS
+    NavTab.MONTH -> java.time.temporal.ChronoUnit.MONTHS
+    else -> java.time.temporal.ChronoUnit.DAYS
+}
+
+/** 把日期对齐到它所属那一期的起点：周=周一，月=1 号，日=本身。 */
+private fun periodStartOf(tab: NavTab, date: LocalDate): LocalDate = when (tab) {
+    NavTab.WEEK -> CalendarLayout.weekStart(date)
+    NavTab.MONTH -> date.withDayOfMonth(1)
+    else -> date
+}
+
+/** 第 [page] 页代表哪一天。 */
+internal fun dateOfPage(tab: NavTab, page: Int): LocalDate {
+    val steps = (page - MIDDLE).toLong()
+    return when (tab) {
+        NavTab.WEEK -> WEEK_EPOCH.plusWeeks(steps)
+        NavTab.MONTH -> PAGE_EPOCH.plusMonths(steps)
+        else -> PAGE_EPOCH.plusDays(steps)
+    }
+}
+
+/** [date] 落在第几页。 */
+internal fun pageOfDate(tab: NavTab, date: LocalDate): Int {
+    val aligned = periodStartOf(tab, date)
+    return when (tab) {
+        // 周用周一基准，月用 1 号基准，日直接按天数差
+        NavTab.WEEK -> MIDDLE + java.time.temporal.ChronoUnit.WEEKS.between(WEEK_EPOCH, aligned).toInt()
+        else -> MIDDLE + chronoUnitFor(tab).between(PAGE_EPOCH, aligned).toInt()
     }
 }
 
