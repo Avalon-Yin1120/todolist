@@ -32,8 +32,8 @@ import java.time.ZoneId
 /** 底部导航的视图。 */
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
-/** 顶层界面：主界面与设置页。 */
-enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH }
+/** 顶层界面：主界面、设置页、表单页与两个说明页。 */
+enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH, ABOUT, PRIVACY }
 
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
@@ -117,6 +117,8 @@ data class TodoUiState(
     val pendingOccurrenceStart: Long = 0L,
     /** 正在处理的重复待办原始副本，供「仅修改本次」构造独立记录。 */
     val pendingRecurringTodo: Todo? = null,
+    /** 版本与构建信息，供设置页的「版本号」与关于页展示。 */
+    val version: VersionInfo = VersionInfo(),
 )
 
 /** 把校验错误枚举翻译成用户可见文案。 */
@@ -149,6 +151,8 @@ class TodoViewModel(
     /** 后台运行（电池优化白名单）能力；为空表示不检查（测试里常用） */
     private val batteryOptimization: com.example.todolist.sys.BatteryOptimizationPermission? = null,
     private val zone: ZoneId = ZoneId.systemDefault(),
+    /** 版本信息；为空时从运行环境读取（测试里可注入固定值） */
+    private val versionInfo: VersionInfo? = null,
 ) : AndroidViewModel(application) {
 
     /** 表单状态独立于列表状态，避免列表刷新打断用户输入。 */
@@ -170,6 +174,7 @@ class TodoViewModel(
             fullScreenIntentAllowed = fullScreenIntentAllowed(),
             needsOemBackgroundGuide = oemBackgroundGuideNeeded(),
             settings = readSettings(),
+            version = versionInfo ?: VersionInfo.of(application),
             // 「今天」必须取自注入的时钟/时区，而不是系统时钟：
             // 否则测试里 FakeClock 的日期和界面认的日期会不一致，
             // 日历首帧就会落到错误的页上。
@@ -202,6 +207,7 @@ class TodoViewModel(
             settings = local.settings,
             pendingOccurrenceStart = local.pendingOccurrenceStart,
             pendingRecurringTodo = local.pendingRecurringTodo,
+            version = local.version,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, TodoUiState())
 
@@ -462,6 +468,7 @@ class TodoViewModel(
             is SettingsChange.UseAlarm -> settings.useAlarmForReminders = change.value
             is SettingsChange.ConfirmDelete -> settings.confirmBeforeDelete = change.value
             is SettingsChange.WarnOverlap -> settings.warnOnOverlap = change.value
+            is SettingsChange.NotificationSound -> settings.notificationSound = change.value
         }
         updateLocal { it.copy(settings = readSettings()) }
     }
@@ -471,6 +478,7 @@ class TodoViewModel(
         confirmBeforeDelete = settings.confirmBeforeDelete,
         warnOnOverlap = settings.warnOnOverlap,
         lastLeadMinutes = settings.lastLeadMinutes,
+        notificationSound = settings.notificationSound,
     )
 
     // ---------------------------------------------------------------- 权限与提示
@@ -513,11 +521,28 @@ class TodoViewModel(
         }
     }
 
-    /** 打开「提醒可靠性检查」页。 */
-    fun openReminderHealth() = updateLocal { it.copy(screen = Screen.REMINDER_HEALTH) }
+    /**
+     * 打开「提醒可靠性检查」页。
+     *
+     * 记住是从哪进来的：从设置页进来就退回设置页，从关于页进来就退回关于页。
+     * 早先无论从哪进都退回主界面，用户想接着看别的设置项就得重新点一遍。
+     */
+    fun openReminderHealth() = updateLocal {
+        it.copy(healthReturnScreen = it.screen, screen = Screen.REMINDER_HEALTH)
+    }
 
-    /** 关闭「提醒可靠性检查」页，回到主界面。 */
-    fun closeReminderHealth() = updateLocal { it.copy(screen = Screen.MAIN) }
+    /** 关闭「提醒可靠性检查」页，回到进入它的那一页。 */
+    fun closeReminderHealth() = updateLocal { it.copy(screen = it.healthReturnScreen) }
+
+    /** 打开「关于待办提醒」页。 */
+    fun openAbout() = updateLocal { it.copy(screen = Screen.ABOUT) }
+
+    fun closeAbout() = updateLocal { it.copy(screen = Screen.SETTINGS) }
+
+    /** 打开「隐私」页。 */
+    fun openPrivacy() = updateLocal { it.copy(screen = Screen.PRIVACY) }
+
+    fun closePrivacy() = updateLocal { it.copy(screen = Screen.SETTINGS) }
 
     fun consumeNotice() = updateLocal { it.copy(notice = null) }
 
@@ -544,8 +569,11 @@ class TodoViewModel(
         val jumpRequest: Long = 0,
         val grouping: ListGrouping = ListGrouping.BY_TIME,
         val screen: Screen = Screen.MAIN,
+        /** 进入「提醒可靠性检查」页之前所在的页面，用于返回 */
+        val healthReturnScreen: Screen = Screen.MAIN,
         val pendingOccurrenceStart: Long = 0L,
         val pendingRecurringTodo: Todo? = null,
+        val version: VersionInfo = VersionInfo(),
     )
 
     companion object {

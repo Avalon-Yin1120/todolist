@@ -47,6 +47,26 @@ object CalendarLayout {
     }
 
     /**
+     * 固定 6 行 × 7 列 = 42 天，用于滑动翻月时每一页高度一致。
+     *
+     * 为什么需要它：[monthGridDates] 返回 28/35/42 天，行数随月份变化
+     * （例如 2026-02 是 28 天 = 4 行），放进横向分页里就会出现
+     * 「有的页高有的页矮」，滑动时高度来回跳动。
+     * 这里在**末尾**继续往后补日期到 42 天，保证每页都是 6 行。
+     *
+     * 只新增不改动 [monthGridDates]：月视图等既有调用方与测试依赖它原来的行数。
+     */
+    fun monthGridDatesFixed(month: YearMonth): List<LocalDate> {
+        val dates = monthGridDates(month)
+        if (dates.size >= FIXED_GRID_DAYS) return dates
+        val last = dates.last()
+        return dates + (1..(FIXED_GRID_DAYS - dates.size)).map { last.plusDays(it.toLong()) }
+    }
+
+    /** 滑动翻月时每页固定的格子数：6 行 × 7 列。 */
+    private const val FIXED_GRID_DAYS = 42
+
+    /**
      * 把待办展开到某一天。
      *
      * 周期待办由 [RecurrenceExpander] 按需展开成当次，因此这里得到的是

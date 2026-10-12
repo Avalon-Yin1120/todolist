@@ -53,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -146,22 +147,35 @@ fun TodoRoute(
     var lastScreen by remember { mutableStateOf(Screen.MAIN) }
     LaunchedEffect(screen) { lastScreen = screen }
 
-    // 返回键：设置页/表单页/检查页按返回应回到主界面，而不是直接退出应用
+    // 返回键：设置页/表单页/检查页/关于页按返回应回到上一级，而不是直接退出应用
     BackHandler(enabled = screen != Screen.MAIN) {
         when (screen) {
             Screen.FORM -> viewModel.dismissForm()
             Screen.SETTINGS -> viewModel.closeSettings()
             Screen.REMINDER_HEALTH -> viewModel.closeReminderHealth()
+            Screen.ABOUT -> viewModel.closeAbout()
+            Screen.PRIVACY -> viewModel.closePrivacy()
             Screen.MAIN -> Unit
         }
     }
+
+    /**
+     * 每个顶层页面各自保存「可保存状态」（滚动位置、开关等）。
+     *
+     * 没有它的话，从设置页进「关于」再返回，设置页会跳回顶部：AnimatedContent 会把
+     * 离开的那一页整个销毁，`rememberSaveable` 的登记也跟着注销了。设置项多、
+     * 「关于」一組又在最底下，每次返回都要重新滚一遍，很难用。
+     */
+    val screenStates = rememberSaveableStateHolder()
 
     AnimatedContent(
         targetState = screen,
         transitionSpec = {
             // 打开子页面：新页面从右侧滑入；返回：新页面从左侧滑入。
             // 两者方向相反，才不会「进也右滑、出也右滑」。
-            val opening = targetState != Screen.MAIN
+            // 用层级深度判断进出方向：设置页(1) → 关于页(2) 是「进」，
+            // 反回来是「出」，否则从关于页返回设置页会朝错误的方向滑。
+            val opening = screenDepth(targetState) > screenDepth(initialState)
             if (opening) {
                 slideInHorizontally(tween(animMs)) { width -> width } togetherWith
                     slideOutHorizontally(tween(animMs)) { width -> -width / 4 } +
@@ -174,78 +188,99 @@ fun TodoRoute(
         },
         label = "screen",
     ) { target ->
-        if (target == Screen.FORM) {
-            // 整屏表单：字段多，需要完整高度
-            TodoFormScreen(
-                form = viewModel.form,
-                isEditing = uiState.editState.editingId != 0L,
-                onBack = viewModel::dismissForm,
-                onSubmit = viewModel::submitForm,
-            )
-            return@AnimatedContent
-        }
+        screenStates.SaveableStateProvider(target) {
+            when (target) {
+                // 整屏表单：字段多，需要完整高度
+                Screen.FORM -> TodoFormScreen(
+                    form = viewModel.form,
+                    isEditing = uiState.editState.editingId != 0L,
+                    onBack = viewModel::dismissForm,
+                    onSubmit = viewModel::submitForm,
+                )
 
-        if (target == Screen.SETTINGS) {
-            SettingsScreen(
-                state = settings,
-                onChange = viewModel::changeSetting,
-                onBack = {
-                    viewModel.closeSettings()
-                    // 从系统设置返回后重新读一次白名单状态
-                    viewModel.refreshBatteryOptimization()
-                },
-                exactAlarmAllowed = uiState.canScheduleExact,
-                onRequestExactAlarmPermission = onRequestExactAlarmPermission,
-                batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
-                onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
-                onOpenReminderHealth = viewModel::openReminderHealth,
-            )
-            return@AnimatedContent
-        }
+                Screen.SETTINGS -> SettingsScreen(
+                    state = settings,
+                    onChange = viewModel::changeSetting,
+                    onBack = {
+                        viewModel.closeSettings()
+                        // 从系统设置返回后重新读一次白名单状态
+                        viewModel.refreshBatteryOptimization()
+                    },
+                    exactAlarmAllowed = uiState.canScheduleExact,
+                    onRequestExactAlarmPermission = onRequestExactAlarmPermission,
+                    batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                    onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
+                    onOpenReminderHealth = viewModel::openReminderHealth,
+                    onOpenAbout = viewModel::openAbout,
+                    onOpenPrivacy = viewModel::openPrivacy,
+                    version = uiState.version,
+                    todoCount = uiState.todos.size,
+                )
 
-        if (target == Screen.REMINDER_HEALTH) {
-            ReminderHealthScreen(
-                canPostNotifications = uiState.canPostNotifications,
-                canScheduleExact = uiState.canScheduleExact,
-                batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
-                fullScreenIntentAllowed = uiState.fullScreenIntentAllowed,
-                needsOemBackgroundGuide = uiState.needsOemBackgroundGuide,
-                alarmModeInUse = settings.useAlarmForReminders ||
-                    uiState.todos.any { it.mode == ReminderMode.ALARM && !it.isDone },
-                onRequestNotificationPermission = onRequestNotificationPermission,
-                onRequestExactAlarm = onRequestExactAlarmPermission,
-                onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
-                onBack = viewModel::closeReminderHealth,
-            )
-            return@AnimatedContent
-        }
+                Screen.ABOUT -> AboutScreen(
+                    version = uiState.version,
+                    onBack = viewModel::closeAbout,
+                    onOpenReminderHealth = viewModel::openReminderHealth,
+                )
 
-        TodoListScreen(
-            uiState = uiState,
-            now = now,
-            zone = zone,
-            animMs = animMs,
-            snackbarHostState = snackbarHostState,
-            onAdd = viewModel::openCreateForm,
-            onToggleDone = viewModel::toggleDone,
-            onEdit = viewModel::openEditForm,
-            onDelete = viewModel::requestDelete,
-            onConfirmDelete = viewModel::confirmDelete,
-            onResolveScope = viewModel::resolveRecurrenceScope,
-            onDismissDialog = viewModel::dismissDialog,
-            onSelectTab = viewModel::selectTab,
-            onSelectDate = viewModel::selectDate,
-            onSelectDateSoft = viewModel::selectDateSoft,
-            onSetGrouping = viewModel::setGrouping,
-            onOpenSettings = viewModel::openSettings,
-            onRequestExactAlarmPermission = onRequestExactAlarmPermission,
-            onRequestNotificationPermission = onRequestNotificationPermission,
-            onOpenReminderHealth = viewModel::openReminderHealth,
-            form = viewModel.form,
-            onDismissForm = viewModel::dismissForm,
-            onSubmitForm = viewModel::submitForm,
-        )
+                Screen.PRIVACY -> PrivacyScreen(onBack = viewModel::closePrivacy)
+
+                Screen.REMINDER_HEALTH -> ReminderHealthScreen(
+                    canPostNotifications = uiState.canPostNotifications,
+                    canScheduleExact = uiState.canScheduleExact,
+                    batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                    fullScreenIntentAllowed = uiState.fullScreenIntentAllowed,
+                    needsOemBackgroundGuide = uiState.needsOemBackgroundGuide,
+                    alarmModeInUse = settings.useAlarmForReminders ||
+                        uiState.todos.any { it.mode == ReminderMode.ALARM && !it.isDone },
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onRequestExactAlarm = onRequestExactAlarmPermission,
+                    onRequestIgnoreBatteryOptimization =
+                        viewModel::requestIgnoreBatteryOptimization,
+                    onBack = viewModel::closeReminderHealth,
+                )
+
+                Screen.MAIN -> TodoListScreen(
+                    uiState = uiState,
+                    now = now,
+                    zone = zone,
+                    animMs = animMs,
+                    snackbarHostState = snackbarHostState,
+                    onAdd = viewModel::openCreateForm,
+                    onToggleDone = viewModel::toggleDone,
+                    onEdit = viewModel::openEditForm,
+                    onDelete = viewModel::requestDelete,
+                    onConfirmDelete = viewModel::confirmDelete,
+                    onResolveScope = viewModel::resolveRecurrenceScope,
+                    onDismissDialog = viewModel::dismissDialog,
+                    onSelectTab = viewModel::selectTab,
+                    onSelectDate = viewModel::selectDate,
+                    onSelectDateSoft = viewModel::selectDateSoft,
+                    onSetGrouping = viewModel::setGrouping,
+                    onOpenSettings = viewModel::openSettings,
+                    onRequestExactAlarmPermission = onRequestExactAlarmPermission,
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onOpenReminderHealth = viewModel::openReminderHealth,
+                    form = viewModel.form,
+                    onDismissForm = viewModel::dismissForm,
+                    onSubmitForm = viewModel::submitForm,
+                )
+            }
+        }
     }
+}
+
+/**
+ * 页面的层级深度，只用于决定页面切换动画的方向。
+ *
+ * 比「是不是 MAIN」更细：从设置页(1)进关于页(2)算「进」，从关于页退回设置页算「退」，
+ * 这样两个方向不会都朝右滑。
+ */
+private fun screenDepth(screen: Screen): Int = when (screen) {
+    Screen.MAIN -> 0
+    Screen.SETTINGS, Screen.FORM -> 1
+    Screen.ABOUT, Screen.PRIVACY -> 2
+    Screen.REMINDER_HEALTH -> 3
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -371,6 +406,7 @@ fun TodoListScreen(
                         NavTab.WEEK -> WeeklyView(
                             todos = uiState.todos,
                             anchor = periodDate,
+                            now = now,
                             zone = zone,
                             onPickDate = onSelectDate,
                         )
@@ -1046,6 +1082,9 @@ const val TAG_RECURRENCE_SUMMARY = "recurrence_summary"
 const val TAG_SETTINGS_BUTTON = "settings_button"
 const val TAG_SETTINGS_SCREEN = "settings_screen"
 const val TAG_SETTINGS_BACK = "settings_back"
+
+/** 周视图时间轴上单个待办色块的 tag 前缀，实际值带 id 后缀，见 [tagForTodo]。 */
+const val TAG_WEEK_BLOCK = "week_block"
 
 /** 生成「带 id」的测试标签，用于精确定位某一行。 */
 fun tagForTodo(base: String, todoId: Long): String = "$base#$todoId"

@@ -50,8 +50,10 @@
     <string name="banner_notification_missing">通知权限未开启，无法弹出提醒</string>
 
     <!-- 通知 -->
-    <string name="notif_channel_name">待办提醒</string>
-    <string name="notif_channel_desc">待办事项到点提醒</string>
+    <string name="notif_channel_name">待办提醒（有声）</string>
+    <string name="notif_channel_desc">待办事项到点提醒，播放一次提示音</string>
+    <string name="notif_channel_name_silent">待办提醒（静音）</string>
+    <string name="notif_channel_desc_silent">待办事项到点提醒，只显示通知不出声</string>
     <string name="notif_content">时间：%1$s</string>
 
     <!-- 闹钟式提醒的前台服务 -->

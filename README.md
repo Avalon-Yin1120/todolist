@@ -14,11 +14,14 @@ Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止�
 | 智能默认 | 新建时自动沿用你上次填写的提前量与提醒方式 |
 | 顶部布局 | 标题居中，左右各一个对称图标按钮（设置 / 新增，不再悬浮遮挡列表）；标题下方显示当前视图的日期范围与倒计时 |
 | 日 / 周 / 月视图 | 默认进入日视图；日期范围在顶部明确显示（**周标题带年份**）；三者都支持左右滑动切换 |
+| **周视图 = 时间轴** | 「全天 24 小时压进一屏」不滚动；每条待办是一个**高度即时长的实心圆角色块**（不再是一小时一个方块）；时间重叠的自动**平分列宽、左右错开**；颜色与日视图同一套（未来蓝 / 即将琥珀 / 进行中绿 / 已过去灰 / 已完成浅灰）；今天那一列有一条「现在」红线 |
 | 冲突提示 | 时间段与已有待办重叠时**仍然创建成功**，但明确告知是哪几条 |
 | 删除确认 | 删除前二次确认（可在设置里关闭） |
-| 设置 | 独立界面（非弹窗）：默认提醒方式、精确闹钟权限状态、删除确认、冲突提示、默认提前量 |
+| 设置 | 独立界面（非弹窗）：默认提醒方式、**通知提示音开关**、精确闹钟权限状态、删除确认、冲突提示、默认提前量、**关于 / 隐私 / 版本号** |
+| 关于与隐私 | 「关于待办提醒」讲清三层提醒通道与两种提醒方式；「隐私」逐条说明数据存在哪、不做什么、每个权限用在哪；「版本号」展示版本/包名/构建类型/数据库版本/设备 API |
 | 整屏表单 | 字段较多，用整屏页面而非对话框承载；按「名称 / 重复 / 时间 / 提醒」分卡，重复选择紧跟名称 |
 | 提醒通知可就地操作 | 通知上直接「完成」或「10 分钟后再提醒」，不必打开 App（后台拉不起界面时这尤其关键） |
+| 通知会响一下 | 通知式提醒到达时播放一次系统提示音，可在设置里单独关掉（关掉后仍会弹通知，只是不出声） |
 | 提醒可靠性检查 | 一页看全「通知权限 / 精确闹钟 / 允许后台运行 / 全屏提醒 / 国产 ROM 自启动」，
 缺项时顶部横幅提示「有 N 项未开启，可能到点不提醒」 |
 
@@ -79,15 +82,21 @@ app/src/main/java/com/example/todolist/
 │  ├─ AlarmReminderScheduler.kt / WorkReminderScheduler.kt
 │  ├─ SchedulingCoordinator.kt # 增删改 + 排定/撤销 + 冲突检测 + 对账 + 场次重排
 │  ├─ ReminderAlarmReceiver.kt / ReminderWorker.kt / BootReceiver.kt
-├─ notify/NotificationHelper.kt# 通知渠道；闹钟式走全屏 Intent
-├─ sys/ExactAlarmPermission.kt # 精确闹钟权限查询与授权引导
+├─ notify/
+│  ├─ NotificationHelper.kt    # 两个通知渠道（有声 / 静音，按设置二选一）
+│  ├─ AlarmRingService.kt      # 闹钟响铃前台服务（与闹钟页同生命周期，见 §4.6）
+│  └─ ReminderActionReceiver.kt# 通知上的「完成 / 10 分钟后再提醒」
+├─ sys/                        # 精确闹钟 / 电池优化 / 提醒可靠性体检
 └─ ui/
-   ├─ TodoListScreen.kt        # 顶部栏 + 底部导航 + 总列表 + 各类对话框
+   ├─ TodoListScreen.kt        # 顶部栏 + 底部导航 + 总列表 + 各类对话框 + 页面路由
    ├─ TodoViews.kt             # 日/周/月视图 + 待办卡片（配色规则 TodoColors）
+   ├─ WeekLayout.kt            # 周视图时间轴的纯排版算法（重叠分簇 + 泳道）
    ├─ CalendarLayout.kt        # 日期与聚合的纯函数（周起止、月网格、忙闲分档）
-   ├─ TodoEditSheet.kt         # 表单（时间、提前量、提醒方式、周期）
+   ├─ CompactCalendar.kt       # 自绘日历（可左右滑动翻月）
    ├─ DateTimePickerField.kt   # 日期/时间选择（只读框 + 独立按钮 + 明确确认键）
    ├─ SettingsScreen.kt        # 设置页
+   ├─ AboutScreen.kt           # 「关于待办提醒」「隐私」两页 + 版本信息
+   ├─ ReminderHealthScreen.kt  # 提醒可靠性检查
    ├─ alarm/AlarmActivity.kt   # 闹钟式提醒页（响铃 + 常亮 + 锁屏显示）
    ├─ TodoViewModel.kt         # 视图状态聚合（导航/设置/对话框/表单）
    └─ DraftFormStateHolder.kt  # 表单状态与校验
@@ -153,19 +162,29 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 | `ui/DraftFormStateHolderTest` | 默认时间取整点、编辑回填、四类校验错误、**提前量为 0 时输入框为空且可删空**、超范围输入标记非法、记住上次提前量 |
 | `ui/TodoViewModelTest` | 表单开合、非法表单不落库、落库并排定、降级提示、编辑不新增、切换完成、**删除需确认**、权限变化提示、**只改本次中途返回不多出待办**、**日历跳转请求只发一次**、**提醒开关刷新与检查页开合** |
 | `ui/CalendarPagingTest` | 页↔日期互逆、同页等价（同一周/同一月任意一天）、页号 +1 恰好前进一期、跨年跨月、**页码预算覆盖今天前后 50 年且越界会断言** |
-| `notify/NotificationHelperTest` | 渠道创建与重要性、幂等、通知 id 映射、通知内容、点击跳转、取消、权限识别 |
+| `ui/WeekLayoutTest` | 周视图时间轴排版：不重叠各占整列宽、**完全/部分/链式重叠分成泳道**、首尾相接不算重叠、隔开的簇各算各的、跨午夜裁剪到 0~24、零时长与结束早于开始被丢弃、结果按开始时间升序 |
+| `ui/CompactCalendarPagingTest` | 日期对话框翻月：页↔月互逆、相邻月差一页、**固定 42 格（6 行 × 7 列）**、首日周一末日周日、闰年二月也补齐 |
+| `notify/NotificationHelperTest` | 渠道创建与重要性、幂等、通知 id 映射、通知内容、点击跳转、**有声/静音两个渠道按设置二选一且开关运行时生效**、**升级时清掉旧渠道**、取消、权限识别 |
+| `notify/AlarmRingServiceTest` | 响铃服务生命周期：启动即响、**页面解绑后停铃**、**宽限期内重新绑定则继续响**、销毁即停、立刻静音入口、重复投递不会留下第二条无人持有的铃声 |
 
 ### 4.2 仪器化测试（API 35 模拟器）
 
 `TodoListUiTest` 覆盖：标题/倒计时/设置入口、新增待办、名称校验拦截、勾选完成后状态、
 **选择闹钟式后徽章更新**、**未来时段不出现勾选框**、**删除先弹确认框（取消/确认两条路径）**、
-底部四个视图切换、设置页开合，以及日历相关的三条回归：
+底部四个视图切换、设置页开合、**关于页/隐私页进出**、**版本号一行与详情弹窗**、
+**通知提示音开关落进设置**、**日期对话框左右滑动翻月**、
+**周视图把待办画成按时间的圆角色块**、**重叠的两条并排错开**，以及日历相关的三条回归：
 **打开日视图就停在今天**、**翻页按钮依次前进且来回对称**、**从月视图切回日视图仍停在今天**。
 
 要点：
 * 通知权限用 `GrantPermissionRule` 预先授予，否则系统权限对话框会盖住界面，
   把 Activity 压到 PAUSED，Compose 会报「No compose hierarchies found」。
 * 行与勾选框用「带 id 的标签」定位，不依赖坐标与列表顺序。
+* 周视图的色块要**用未合并语义树**查（`useUnmergedTree = true`）：整列是 `clickable` 的，
+  会把子节点合并成一个语义节点，默认查询看不到里面的色块。
+* 造数据尽量不走界面：涉及「今天某个固定时刻」的用例直接调
+  `SchedulingCoordinator.create`，避免「默认起始时间是下一个整点」在深夜跑用例时
+  悄悄跨到明天（这个坑真实发生过，见 `setStartToYesterday` 的注释）。
 
 ### 4.3 系统行为验证（adb）
 
@@ -229,6 +248,78 @@ $pkg='com.example.todolist'
 验证方式见 `ui/CalendarPagingTest`（11 个不变量用例：互逆、单调、同页等价、预算覆盖、
 越界断言）与 `TodoListUiTest` 里的「打开日视图就停在今天」「翻页按钮依次前进且来回对称」
 「从月视图切回日视图仍停在今天」。
+
+---
+
+### 4.5 周视图 = 时间轴：为什么这样画
+
+用户给出的样例是一张「左列时间刻度 + 每天一列 + 圆角矩形色块」的图。之前那一版的问题有两个：
+**纵向只能看到 0 点到 18 点**（每小时固定 22dp，24 小时要 528dp 加表头，超出一屏），
+以及**用「每小时一个方块」表达忙碌**，看不出每条待办本身。
+
+现在的做法：
+
+| 关注点 | 做法 |
+|---|---|
+| 全天可见 | `BoxWithConstraints` 量出可用高度，`hourHeight = 可用高度 / 24`，24 小时等比压进一屏，**不滚动** |
+| 高度即时长 | 色块高度 = `hourHeight × 时长`；短到看不见的给 12dp 下限（15 分钟在压缩后只有几 dp） |
+| 重叠错开 | `WeekLayout.blocksOf` 先划分**重叠簇**，再在簇内**贪心分泳道**；同一簇的色块各占 `1/泳道数` 列宽并左右偏移，因此「两个重叠的待办」变成各半宽、并排显示 |
+| 一矩形 = 一条待办 | 不再把同一时段的忙碌合并成一个色块，也不再画逐格底格 |
+| 状态配色 | 直接用日视图那套 `TodoColors.paletteOf(...).accent`：未来蓝 / 即将琥珀 / 进行中绿 / 已过去灰 / 已完成浅灰 |
+| 今天 | 表头日号用主色加粗，该列额外画一条「现在」红线 |
+| 跨午夜 | `WeekLayout` 会把「前几天开始、还没结束」的待办也捞进来并裁剪到 0~24。`CalendarLayout.todosOn` 是按**开始日期**归类的，只看当天的话「前一天 23:00 → 今天 01:00」在第二天的列上会整条消失 |
+
+`WeekLayout` 是纯 Kotlin（不引用任何 Android/Compose 类型），所以泳道划分这类
+「画在屏幕上很难断言」的逻辑由 `ui/WeekLayoutTest` 的 14 个用例钉住。
+
+验证：`TodoListUiTest` 的「周视图把待办画成按时间的圆角色块」「重叠的两条待办会并排错开而不是叠在一起」，
+以及真机截图 `验证截图/27-周视图时间轴.png`。
+
+---
+
+### 4.6 闹钟响铃必须与闹钟页同生命周期
+
+用户反馈「有时关闭界面没了，闹钟还在继续响」。两个独立的根因，都已修掉：
+
+1. **服务与页面毫无关系**。响铃由 `AlarmRingService`（前台服务）持有，而闹钟页只
+   `finish()` 自己；返回键、上滑划掉、被系统回收这三条路径都**不会**执行 `finish()` 里的收尾，
+   于是服务继续响。现在闹钟页在 `onCreate` **绑定**该服务，页面销毁时系统自动解绑，
+   服务的 `onUnbind` 停铃并 `stopSelf()`。
+   解绑后留 600ms 宽限期（`UNBIND_GRACE_MS`）：屏幕旋转也会走「销毁 + 重建」，
+   新页面在这段时间内重新绑定就取消停止，否则转一下屏幕闹钟就不响了。
+2. **重复投递会留下第二条无人持有的铃声**。`onStartCommand` 可能被投递多次
+   （精确通道与 +3 分钟保险通道先后触发），而旧实现每次都 `new Ringtone` 覆盖字段，
+   前一个再也没人 `stop()`。现在 `startRinging()` **无条件先停掉上一条**，
+   并且同一条待办的重复投递直接跳过。
+
+另外两个保险：
+
+* 通知里的「完成 / 稍后提醒」跑在广播接收器里，拿不到绑定句柄，而 `stopService`
+  对**已被页面绑定**的服务不会立刻停铃——所以额外提供了同进程的 `AlarmRingService.muteNow()`，
+  先立刻静音再停服务。
+* 响铃最长 5 分钟（`MAX_RING_MS`）后自动停止，避免异常路径下一直响。
+
+验证方式（模拟器/真机均可复现）：
+
+```powershell
+$adb='D:\Android\sdk\platform-tools\adb.exe'
+& $adb shell appops set com.example.todolist SCHEDULE_EXACT_ALARM allow
+& $adb logcat -c
+# 造一条 12 秒后触发的闹钟式提醒
+& $adb shell am broadcast -a com.example.todolist.debug.SEED_TODO `
+    -n com.example.todolist/com.example.todolist.debug.DebugSeedReceiver `
+    -e name 闹钟关闭验证 --el trigger_in_seconds 12 --ez alarm true
+# 等响铃页弹出来之后（不要点任何按钮）按返回键
+& $adb shell input keyevent 4
+& $adb logcat -d -s TodoAlarm
+# 期望看到：闹钟开始响铃 → 闹钟页已关闭，停止响铃并退出服务 → 闹钟停止响铃
+& $adb shell dumpsys activity services com.example.todolist   # 不应再有 AlarmRingService
+```
+
+实测（API 35 模拟器）：绑定关系在 `dumpsys activity services` 里能看到
+`ConnectionRecord ... CR com.example.todolist/.notify.AlarmRingService`；
+按返回键后日志顺序为「闹钟页已关闭，停止响铃并退出服务」→「闹钟停止响铃」，
+服务记录消失。
 
 ---
 
@@ -308,7 +399,17 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
 - **数据库当前 v5，全部使用 `fallbackToDestructiveMigration`**：仍在测试阶段、每次都允许清库，
   正式发布前必须替换为真正的 `Migration`（已导出 schema，可用于比对），
   并把 `versionCode` / `versionName` / 包名（现在是 `com.example.todolist`）一起改掉。
+  当前 `versionCode = 16`、`versionName = "0.16.0"`，是「第 16 次测试构建」的记法，
+  发版时改成 1.0.0 之类的正式语义即可（设置 → 版本号 里显示的就是这两个值，不用改代码）。
+- **通知提示音是「响一下」，闹钟式是「一直响到处理」**：两者互不影响，
+  关闭「通知提示音」不会让闹钟式提醒变安静。
+- **通知渠道创建后声音不可更改**，所以「有声 / 静音」是两个固定渠道按设置二选一；
+  升级安装时会主动删掉旧版本留下的渠道（`todo_reminder`），避免系统设置里堆同名项。
 - 设置中的「默认使用闹钟式」会影响新建待办的默认选项，不改变已有待办。
+- **周视图把 24 小时压进一屏**，因此极短的待办（十几分钟）会贴着 12dp 的高度下限；
+  想知道精确时刻请点该列进日视图，或看色块内的名称。
+- 设置页/关于页/隐私页的滚动位置会保留（`rememberSaveableStateHolder`），
+  从「关于」返回不会跳回顶部。
 
 ---
 
@@ -349,8 +450,8 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
 |---|---|---|
 | 模拟器冷启动 | 约 60s+ | **约 20s** |
 | 应用冷启动（`am start -W` TotalTime） | — | **2.27s** |
-| 一次完整 instrumented 测试（构建+安装+22 个用例） | 2–3 分钟 | **约 40–60s** |
-| 完整单测（182 用例 / 11 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
+| 一次完整 instrumented 测试（构建+安装+28 个用例） | 2–3 分钟 | **约 45–60s** |
+| 完整单测（224 用例 / 15 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
 
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
 以及把 ViewModel 里常驻的每秒 `while(true)` 轮询改成按需冷流

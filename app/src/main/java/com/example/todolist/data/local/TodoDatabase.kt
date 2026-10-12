@@ -19,6 +19,14 @@ abstract class TodoDatabase : RoomDatabase() {
         /** 数据库文件名；测试用它做隔离，因此声明为 internal 供同模块复用。 */
         internal const val DB_NAME = "todolist.db"
 
+        /**
+         * 数据库版本，供「设置 → 版本号」展示。
+         *
+         * 与上面 `@Database(version = ...)` 必须保持一致（注解参数不能引用本类的
+         * companion 常量，只能各写一份，改的时候两处一起改）。
+         */
+        const val DB_VERSION = 5
+
         @Volatile
         private var instance: TodoDatabase? = null
 

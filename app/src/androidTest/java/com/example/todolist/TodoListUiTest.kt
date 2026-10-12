@@ -17,6 +17,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
@@ -38,7 +41,20 @@ import com.example.todolist.ui.TAG_RECURRENCE_PREFIX
 import com.example.todolist.ui.TAG_WEEKDAY_PREFIX
 import com.example.todolist.ui.TAG_SETTINGS_BUTTON
 import com.example.todolist.ui.TAG_SETTINGS_BACK
+import com.example.todolist.ui.TAG_SETTINGS_SCREEN
 import com.example.todolist.ui.TAG_SETTING_ALARM
+import com.example.todolist.ui.TAG_SETTING_NOTIFICATION_SOUND
+import com.example.todolist.ui.TAG_OPEN_ABOUT
+import com.example.todolist.ui.TAG_OPEN_PRIVACY
+import com.example.todolist.ui.TAG_ABOUT_SCREEN
+import com.example.todolist.ui.TAG_ABOUT_BACK
+import com.example.todolist.ui.TAG_PRIVACY_SCREEN
+import com.example.todolist.ui.TAG_PRIVACY_BACK
+import com.example.todolist.ui.TAG_VERSION_ROW
+import com.example.todolist.ui.TAG_VERSION_DIALOG
+import com.example.todolist.ui.TAG_VERSION_CLOSE
+import com.example.todolist.ui.TAG_WEEK_BLOCK
+import com.example.todolist.ui.TAG_CALENDAR_PAGER
 import com.example.todolist.ui.TAG_SWIPE_AREA
 import com.example.todolist.ui.TAG_TAB_DAY
 import com.example.todolist.ui.TAG_TAB_MONTH
@@ -258,6 +274,42 @@ class TodoListUiTest {
         composeRule.onNodeWithText("日期 01-01", substring = true).assertExists()
     }
 
+    /**
+     * 日期对话框里的日历可以左右滑动切换月份。
+     *
+     * 起点月份取自字段里已有的日期（而不是 `LocalDate.now()`）：
+     * 默认起始时间是「下一个整点」，23 点跑用例时它会滚到明天，
+     * 月末最后一天就会跨月，断言当月文案会随机失败。
+     */
+    @Test
+    fun 日期选择器可以左右滑动切换月份() {
+        composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
+        composeRule.waitForIdle()
+        val startDate = LocalDate.parse(startFieldText().substringBefore(" "))
+        val shownMonth = java.time.YearMonth.from(startDate)
+
+        composeRule.onNodeWithTag("start_date_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(monthLabelOf(shownMonth)).assertExists()
+
+        // 左滑 → 下一个月
+        composeRule.onNodeWithTag(TAG_CALENDAR_PAGER).performTouchInput { swipeLeft() }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(monthLabelOf(shownMonth.plusMonths(1)))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 右滑 → 回到上一个月（左右要对称，不能一去不回）
+        composeRule.onNodeWithTag(TAG_CALENDAR_PAGER).performTouchInput { swipeRight() }
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText(monthLabelOf(shownMonth))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun monthLabelOf(month: java.time.YearMonth): String =
+        "${month.year} 年 ${month.monthValue} 月"
+
     @Test
     fun 日期手动输入非法时不接受() {
         composeRule.onNodeWithTag(TAG_ADD_FAB).performClick()
@@ -391,27 +443,38 @@ class TodoListUiTest {
             .config[SemanticsProperties.EditableText]
             .text
 
-    /** 把起始时间字段的日期与时间改成「现在」，让待办进入可勾选时段。 */
-    private fun setStartToNow() {
-        // 先点日期按钮，在弹出的日历里确认今天
+    /**
+     * 把起始时间改到「昨天」，让待办进入可勾选时段（不再是「未来」）。
+     *
+     * 为什么不用「今天的某个更早时刻」：新建表单的默认起始时间是**下一个整点**，
+     * 于是在 00:00~01:00 之间跑用例时默认时间已经落在今天凌晨，
+     * 再往前减两小时仍然是今天更晚的时刻——算出来的待办还是「未来」，
+     * 行里显示的是「未开始」而不是勾选框，断言会莫名其妙地找不到节点
+     * （这个坑真实发生过：晚上跑全绿，凌晨跑必挂）。
+     *
+     * 改成直接改日期到昨天：无论几点跑，起始与结束都一定已经过去。
+     * 顺带覆盖了「手动输入年月日」这条路径，比点日历补位格子更稳（不受月末跨月影响）。
+     */
+    private fun setStartToYesterday() {
+        val yesterday = LocalDate.now().minusDays(1)
         composeRule.onNodeWithTag("start_date_button").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("date_confirm").performClick()
+
+        composeRule.onNodeWithTag("date_year").performTextClearance()
+        composeRule.onNodeWithTag("date_year").performTextInput(yesterday.year.toString())
+        composeRule.onNodeWithTag("date_month").performTextClearance()
+        composeRule.onNodeWithTag("date_month").performTextInput(yesterday.monthValue.toString())
+        composeRule.onNodeWithTag("date_day").performTextClearance()
+        composeRule.onNodeWithTag("date_day").performTextInput(yesterday.dayOfMonth.toString())
         composeRule.waitForIdle()
 
-        // 再把时间往前调：反复点 -15 直到开始时间不晚于现在（最多 8 次 = 2 小时）
-        repeat(8) {
-            composeRule.onNodeWithTag("start_time_button").performClick()
-            composeRule.waitForIdle()
-            composeRule.onAllNodesWithText("-15")[0].performClick()
-            composeRule.onNodeWithTag("time_confirm").performClick()
-            composeRule.waitForIdle()
-        }
+        composeRule.onNodeWithTag("date_confirm").performClick()
+        composeRule.waitForIdle()
     }
 
     @Test
     fun 勾选后展示已完成状态() {
-        val id = addTodo(unique("勾选验证"), beforeSave = { setStartToNow() })
+        val id = addTodo(unique("勾选验证"), beforeSave = { setStartToYesterday() })
         gotoListTab()
         val checkboxTag = tagForTodo(TAG_TODO_CHECKBOX, id)
 
@@ -619,5 +682,162 @@ class TodoListUiTest {
         composeRule.waitUntil(timeoutMillis = 10_000) {
             periodLabelText() == DateFormats.fullDate(LocalDate.now())
         }
+    }
+
+    // ------------------------------------------------------------ 设置：关于 / 隐私 / 版本号
+
+    @Test
+    fun 设置页能进入关于页与隐私页并原路返回() {
+        composeRule.onNodeWithTag(TAG_SETTINGS_BUTTON).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TAG_OPEN_ABOUT).performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_ABOUT_SCREEN).assertIsDisplayed()
+        composeRule.onNodeWithText("提醒是怎么工作的").assertExists()
+
+        composeRule.onNodeWithTag(TAG_ABOUT_BACK).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SETTINGS_SCREEN).assertIsDisplayed()
+
+        composeRule.onNodeWithTag(TAG_OPEN_PRIVACY).performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_PRIVACY_SCREEN).assertIsDisplayed()
+        // 结论必须一眼可见，而不是埋在段落里
+        composeRule.onNodeWithText("你的待办只存在这台手机上。").assertExists()
+
+        composeRule.onNodeWithTag(TAG_PRIVACY_BACK).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SETTINGS_SCREEN).assertIsDisplayed()
+    }
+
+    @Test
+    fun 版本号一行展示真实版本并能打开详情() {
+        composeRule.onNodeWithTag(TAG_SETTINGS_BUTTON).performClick()
+        composeRule.waitForIdle()
+
+        val version = com.example.todolist.ui.VersionInfo.of(
+            InstrumentationRegistry.getInstrumentation().targetContext.applicationContext,
+        )
+        // 界面显示的必须是打包时写进 BuildConfig 的那一份，不能是写死的字符串
+        composeRule.onNodeWithTag(TAG_VERSION_ROW).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(version.shortLabel()).assertExists()
+
+        composeRule.onNodeWithTag(TAG_VERSION_ROW).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_VERSION_DIALOG).assertExists()
+        composeRule.onNodeWithText("版本信息").assertExists()
+
+        composeRule.onNodeWithTag(TAG_VERSION_CLOSE).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_VERSION_DIALOG).assertDoesNotExist()
+    }
+
+    @Test
+    fun 通知提示音开关可以切换并且落进设置() {
+        composeRule.onNodeWithTag(TAG_SETTINGS_BUTTON).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TAG_SETTING_NOTIFICATION_SOUND).performScrollTo().assertIsOn()
+        composeRule.onNodeWithTag(TAG_SETTING_NOTIFICATION_SOUND).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TAG_SETTING_NOTIFICATION_SOUND).assertIsOff()
+
+        // 不只是界面上的开关状态，设置存储里也要真的变了
+        val graph = (InstrumentationRegistry.getInstrumentation()
+            .targetContext.applicationContext as TodoApp).requireGraph()
+        org.junit.Assert.assertFalse(graph.settings.notificationSound)
+
+        // 复位，避免影响后续用例
+        composeRule.onNodeWithTag(TAG_SETTING_NOTIFICATION_SOUND).performClick()
+        composeRule.waitForIdle()
+        org.junit.Assert.assertTrue(graph.settings.notificationSound)
+    }
+
+    // ------------------------------------------------------------ 周视图时间轴
+
+    /**
+     * 在「今天」直接落一条固定时段（10:00-12:00）的待办。
+     *
+     * 不走界面新增：界面新增的默认起始时间是「下一个整点」，
+     * 在 23 点跑用例时会落到明天甚至下一周，断言就会随机失败。
+     */
+    private fun seedTodoToday(name: String): Long {
+        val application = InstrumentationRegistry.getInstrumentation()
+            .targetContext.applicationContext
+        val graph = (application as TodoApp).requireGraph()
+        val zone = java.time.ZoneId.systemDefault()
+        val start = LocalDate.now().atTime(10, 0).atZone(zone).toInstant().toEpochMilli()
+        return runBlocking {
+            graph.coordinator.create(
+                com.example.todolist.data.TodoDraft(
+                    name = name,
+                    startAt = start,
+                    endAt = start + 2 * 60 * 60 * 1000L,
+                    leadMinutes = 0,
+                    mode = com.example.todolist.domain.ReminderMode.NOTIFICATION,
+                ),
+            ).todoId
+        }
+    }
+
+    @Test
+    fun 周视图把待办画成按时间的圆角色块() {
+        val name = unique("周视图色块")
+        val id = seedTodoToday(name)
+
+        composeRule.onNodeWithTag(TAG_TAB_WEEK).performClick()
+        composeRule.waitForIdle()
+
+        // 每个圆角矩形对应一条待办，用带 id 的 tag 精确定位。
+        // 必须走未合并的语义树：整列是 clickable 的，而 clickable 会把子节点
+        // 合并成一个节点，默认查询看不到里面的色块。
+        val blockTag = tagForTodo(TAG_WEEK_BLOCK, id)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(blockTag, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(blockTag, useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun 重叠的两条待办会并排错开而不是叠在一起() {
+        val first = seedTodoToday(unique("重叠A"))
+        val second = seedTodoToday(unique("重叠B"))
+
+        composeRule.onNodeWithTag(TAG_TAB_WEEK).performClick()
+        composeRule.waitForIdle()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithTag(
+                tagForTodo(TAG_WEEK_BLOCK, second),
+                useUnmergedTree = true,
+            ).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val nodeA = composeRule
+            .onNodeWithTag(tagForTodo(TAG_WEEK_BLOCK, first), useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+        val nodeB = composeRule
+            .onNodeWithTag(tagForTodo(TAG_WEEK_BLOCK, second), useUnmergedTree = true)
+            .fetchSemanticsNode().boundsInRoot
+
+        // 同一时段的两条（都是 10:00-12:00）：必须各占半宽并左右错开，
+        // 否则就是「叠在一起」——那正是这次要修掉的观感问题
+        val (left, right) = if (nodeA.left <= nodeB.left) {
+            nodeA to nodeB
+        } else {
+            nodeB to nodeA
+        }
+        val unionWidth = maxOf(nodeA.right, nodeB.right) - minOf(nodeA.left, nodeB.left)
+
+        org.junit.Assert.assertTrue(
+            "两条重叠待办应左右错开而不是压在一起：left=$left right=$right",
+            right.left >= left.right - 1f,
+        )
+        org.junit.Assert.assertTrue(
+            "重叠时每条都应比两者并集窄（即各占约一半宽）：" +
+                "A宽=${nodeA.width} B宽=${nodeB.width} 并集=$unionWidth",
+            nodeA.width < unionWidth && nodeB.width < unionWidth,
+        )
     }
 }

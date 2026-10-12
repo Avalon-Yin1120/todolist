@@ -5,9 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,12 +31,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.todolist.domain.RecurrenceExpander
 import com.example.todolist.domain.TimeBucket
@@ -145,25 +150,59 @@ fun DailyView(
     }
 }
 
+/** 周视图左侧时间刻度栏的宽度；表头留同样宽的占位才能和下面的列对齐。 */
+private val WEEK_GUTTER_WIDTH = 40.dp
+
+/** 刻度标签自身的高度，用来让最底下那个 24:00 不越出可视区。 */
+private val WEEK_LABEL_HEIGHT = 12.dp
+
+/**
+ * 色块的最小高度。
+ *
+ * 高度仍然按真实时长计算；但 24 小时压进一屏后，15 分钟只剩几个 dp，
+ * 会小到看不见、也点不到，所以给一个下限兜底（只影响极短的待办）。
+ */
+private val MIN_EVENT_HEIGHT = 12.dp
+
+/** 低于这个高度就不再放名字：塞进去只会糊成一团。 */
+private val MIN_EVENT_TEXT_HEIGHT = 20.dp
+
+/**
+ * [BoxWithConstraints] 拿不到有限高度时的回退值。
+ *
+ * 父容器不限高时 `maxHeight` 是 `Dp.Infinity`，直接除以 24 会得到无穷大，
+ * 所有偏移量都会变成 NaN，所以必须退回一个确定的高度。
+ */
+private val WEEK_FALLBACK_HEIGHT = 480.dp
+
+/** 左侧刻度标签：顶、中、底都要有，才方便估算某条待办落在哪个时段。 */
+private val WEEK_LABEL_HOURS = listOf(0, 6, 12, 18, 24)
+
 /**
  * 周视图：横向 7 天、纵向 24 小时。
  *
- * 按需求只表达「有没有待办」，不展示详情；点击某一列跳到那一天的日视图。
+ * 与旧版的区别在于「24 小时全部可见」：整块高度按可用空间等比压缩，
+ * 不再纵向滚动；待办画成高度即时长的实心色块，重叠的自动分泳道并排显示，
+ * 因此不会再有「一小时一个方块」的底格。点击某一列跳到那一天的日视图。
  */
 @Composable
 fun WeeklyView(
     todos: List<Todo>,
     anchor: LocalDate,
+    now: Long,
     zone: ZoneId,
     onPickDate: (LocalDate) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val weekDates = CalendarLayout.weekDates(anchor)
+    val today = CalendarLayout.toLocalDate(now, zone)
+
     Column(modifier = modifier.fillMaxSize()) {
+        // ---- 表头：周一~周日 + 日号 ----
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Spacer(Modifier.width(40.dp))
+            Spacer(Modifier.width(WEEK_GUTTER_WIDTH))
             weekDates.forEach { date ->
-                val marked = CalendarLayout.todosOn(todos, date, zone).isNotEmpty()
+                val isToday = date == today
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -179,77 +218,157 @@ fun WeeklyView(
                     Text(
                         text = date.dayOfMonth.toString(),
                         style = MaterialTheme.typography.bodySmall,
-                        fontWeight = if (marked) FontWeight.Bold else FontWeight.Normal,
+                        // 今天要一眼认出来：主色 + 加粗
+                        color = if (isToday) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
                     )
                 }
             }
         }
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 8.dp),
-        ) {
-            // 左侧小时刻度
-            Column(modifier = Modifier.width(40.dp)) {
-                (0 until CalendarLayout.HOURS_PER_DAY).forEach { hour ->
-                    Box(
-                        modifier = Modifier
-                            .height(HOUR_CELL_HEIGHT)
-                            .fillMaxWidth(),
-                        contentAlignment = Alignment.TopEnd,
-                    ) {
-                        if (hour % 3 == 0) {
-                            Text(
-                                text = "%02d".format(hour),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(end = 4.dp),
-                            )
-                        }
-                    }
-                }
-            }
-            // 7 天 × 24 小时的底格 + 按时间比例精准填充的色块
-            val dayHeight = HOUR_CELL_HEIGHT * CalendarLayout.HOURS_PER_DAY
-            // 每小时的显示高度，用于把「小时」换算成「dp」
-            val hourHeight = HOUR_CELL_HEIGHT
-            weekDates.forEach { date ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(dayHeight)
-                        .clickable { onPickDate(date) },
-                ) {
-                    // 底格：每小时一格，只作视觉刻度
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        (0 until CalendarLayout.HOURS_PER_DAY).forEach { hour ->
-                            Box(
-                                modifier = Modifier
-                                    .height(HOUR_CELL_HEIGHT)
-                                    .fillMaxWidth()
-                                    .padding(1.dp)
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(
-                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                                    ),
-                            )
-                        }
-                    }
-                    // 色块：起点与高度都按真实时刻计算，因此半小时的事就占半格，
-                    // 而不是把整格填满——这正是「按时间比例精准填充」的含义。
-                    CalendarLayout.busySpans(todos, date, zone).forEach { (startHour, endHour) ->
-                        Box(
+
+        // ---- 时间网格：整块可见高度平分给 24 小时，于是全天一屏看完 ----
+        BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            val gridHeight = if (maxHeight.value.isFinite()) maxHeight else WEEK_FALLBACK_HEIGHT
+            val hourHeight = gridHeight / CalendarLayout.HOURS_PER_DAY
+
+            Row(modifier = Modifier.fillMaxWidth().height(gridHeight)) {
+                // 刻度栏用 offset 绝对定位几个标签；用等高的 24 行去排会把高度撑开
+                Box(modifier = Modifier.width(WEEK_GUTTER_WIDTH).fillMaxHeight()) {
+                    WEEK_LABEL_HOURS.forEach { hour ->
+                        Text(
+                            text = "%02d:00".format(hour),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
                             modifier = Modifier
-                                .padding(horizontal = 1.dp)
-                                .offset(y = hourHeight * startHour.toFloat())
-                                .fillMaxWidth()
-                                .height(hourHeight * (endHour - startHour).toFloat())
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(MaterialTheme.colorScheme.primary),
+                                .align(Alignment.TopEnd)
+                                // 24:00 正好落到底边之外，往上收一个标签高度让它留在可视区内
+                                .offset(
+                                    y = (hourHeight * hour)
+                                        .coerceAtMost(gridHeight - WEEK_LABEL_HEIGHT)
+                                        .coerceAtLeast(0.dp),
+                                )
+                                .padding(end = 4.dp),
                         )
                     }
                 }
+                weekDates.forEach { date ->
+                    WeekDayColumn(
+                        date = date,
+                        blocks = WeekLayout.blocksOf(todos, date, zone),
+                        hourHeight = hourHeight,
+                        now = now,
+                        zone = zone,
+                        isToday = date == today,
+                        onPickDate = onPickDate,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
+        }
+    }
+}
+
+/**
+ * 周视图里的一天：一条淡竖线、若干个按泳道错开的色块，今天再多一条「现在」的指示线。
+ *
+ * 这里再套一层 [BoxWithConstraints] 是为了拿到本列的实际宽度——
+ * 泳道宽度是按列宽算出来的，只有在这一层才量得到。
+ */
+@Composable
+private fun WeekDayColumn(
+    date: LocalDate,
+    blocks: List<WeekEventBlock>,
+    hourHeight: Dp,
+    now: Long,
+    zone: ZoneId,
+    isToday: Boolean,
+    onPickDate: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxHeight()
+            // 色块靠 offset 定位，会溢出列边界；裁掉才不会串到相邻列上
+            .clipToBounds()
+            .clickable { onPickDate(date) },
+    ) {
+        val columnWidth = maxWidth
+
+        // 很淡的竖分隔线，帮助区分相邻两列
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+        )
+
+        blocks.forEach { block ->
+            WeekBlock(
+                block = block,
+                columnWidth = columnWidth,
+                hourHeight = hourHeight,
+                now = now,
+                zone = zone,
+            )
+        }
+
+        if (isToday) {
+            // 只在今天这一列画「现在」，一眼看出今天还剩多少时间
+            val passedHours = Instant.ofEpochMilli(now).atZone(zone)
+                .toLocalTime().toSecondOfDay() / 3600.0
+            Box(
+                modifier = Modifier
+                    .offset(y = hourHeight * passedHours.toFloat())
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.error),
+            )
+        }
+    }
+}
+
+/** 一条待办的色块：高度即时长，颜色沿用日视图/列表的同一套配色。 */
+@Composable
+private fun WeekBlock(
+    block: WeekEventBlock,
+    columnWidth: Dp,
+    hourHeight: Dp,
+    now: Long,
+    zone: ZoneId,
+) {
+    // 同一重叠簇里各占列宽的一份，于是重叠的两条会各占一半、并排显示
+    val laneWidth = columnWidth / block.laneCount
+    // 左右各留 1dp 缝，重叠时才看得出是两块；再窄也保证宽度为正，否则 width() 会抛异常
+    val blockWidth = (laneWidth - 2.dp).coerceAtLeast(1.dp)
+    val blockHeight = maxOf(hourHeight * (block.endHour - block.startHour).toFloat(), MIN_EVENT_HEIGHT)
+    val palette = TodoColors.paletteOf(block.todo, now, zone)
+    // 浅色底配黑字、深色底配白字，任何状态色下都读得清
+    val textColor = if (palette.accent.luminance() > 0.5f) Color.Black else Color.White
+
+    Box(
+        modifier = Modifier
+            .offset(x = laneWidth * block.lane, y = hourHeight * block.startHour.toFloat())
+            .width(blockWidth)
+            .height(blockHeight)
+            .clip(RoundedCornerShape(4.dp))
+            .background(palette.accent)
+            .testTag(tagForTodo(TAG_WEEK_BLOCK, block.todo.id)),
+    ) {
+        // 只有放得下文字时才写名字，行数按实际高度给，超出交给圆角矩形裁掉
+        if (blockHeight >= MIN_EVENT_TEXT_HEIGHT) {
+            Text(
+                text = block.todo.name,
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor,
+                maxLines = ((blockHeight.value - 2f) / 12f).toInt().coerceAtLeast(1),
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),
+            )
         }
     }
 }
@@ -487,8 +606,6 @@ private fun formatDateTime(epochMillis: Long, zone: ZoneId): String =
 
 private fun formatTime(epochMillis: Long, zone: ZoneId): String =
     Instant.ofEpochMilli(epochMillis).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
-
-private val HOUR_CELL_HEIGHT = 22.dp
 
 const val TAG_WEEK_COLUMN_PREFIX = "week_col_"
 const val TAG_MONTH_CELL_PREFIX = "month_cell_"

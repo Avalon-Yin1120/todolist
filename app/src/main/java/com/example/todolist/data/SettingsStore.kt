@@ -23,6 +23,14 @@ interface SettingsStore {
 
     /** 时间段冲突时是否提示（关闭后仍可创建，只是不提示）。 */
     var warnOnOverlap: Boolean
+
+    /**
+     * 提醒通知是否播放提示音。
+     *
+     * 与「闹钟式提醒」是两回事：闹钟式是持续响铃直到处理，通知只是「响一下」。
+     * 关掉后通知仍然会弹出（横幅 + 通知栏），只是不出声。
+     */
+    var notificationSound: Boolean
 }
 
 /** 生产实现。 */
@@ -47,12 +55,17 @@ class SharedPreferencesSettingsStore(context: Context) : SettingsStore {
         get() = prefs.getBoolean(KEY_WARN_OVERLAP, true)
         set(value) = prefs.edit().putBoolean(KEY_WARN_OVERLAP, value).apply()
 
+    override var notificationSound: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATION_SOUND, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATION_SOUND, value).apply()
+
     companion object {
         private const val PREFS_NAME = "todolist_settings"
         private const val KEY_USE_ALARM = "use_alarm_for_reminders"
         private const val KEY_LAST_LEAD = "last_lead_minutes"
         private const val KEY_CONFIRM_DELETE = "confirm_before_delete"
         private const val KEY_WARN_OVERLAP = "warn_on_overlap"
+        private const val KEY_NOTIFICATION_SOUND = "notification_sound"
 
         /** 用户从未设置过时的默认提前量。 */
         const val DEFAULT_LEAD_MINUTES = 0
@@ -65,4 +78,5 @@ class InMemorySettingsStore(
     override var lastLeadMinutes: Int = SharedPreferencesSettingsStore.DEFAULT_LEAD_MINUTES,
     override var confirmBeforeDelete: Boolean = true,
     override var warnOnOverlap: Boolean = true,
+    override var notificationSound: Boolean = true,
 ) : SettingsStore

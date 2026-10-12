@@ -96,16 +96,23 @@ class AppGraph(application: Application) {
 
     val repository: TodoRepository = TodoRepository(database.todoDao())
 
-    val notificationHelper: NotificationHelper = NotificationHelper(application)
+    /** 用户设置：提醒方式、记住的提前量、是否二次确认等。 */
+    val settings: SettingsStore = SharedPreferencesSettingsStore(application)
+
+    /**
+     * 通知发送器。
+     *
+     * 提示音开关是运行时设置，所以这里传的是取值函数而不是当时的布尔值——
+     * 否则用户改了开关也要等下次冷启动才生效。
+     */
+    val notificationHelper: NotificationHelper =
+        NotificationHelper(application, soundEnabled = { settings.notificationSound })
 
     val exactAlarmPermission: ExactAlarmPermission = SystemExactAlarmPermission(application)
 
     /** 后台运行（电池优化白名单）能力，用于引导用户允许后台运行。 */
     val batteryOptimization: com.example.todolist.sys.BatteryOptimizationPermission =
         com.example.todolist.sys.SystemBatteryOptimizationPermission(application)
-
-    /** 用户设置：提醒方式、记住的提前量、是否二次确认等。 */
-    val settings: SettingsStore = SharedPreferencesSettingsStore(application)
 
     /**
      * 精确闹钟通道：闹钟式提醒的主通道。

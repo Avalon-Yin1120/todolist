@@ -1,13 +1,18 @@
 package com.example.todolist.ui.alarm
 
 import android.app.KeyguardManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
+import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -53,10 +58,30 @@ import java.util.Locale
  * * 循环播放提醒音（用系统闹钟铃声，用户可在系统设置里改）；
  * * 保持屏幕常亮；
  * * 提供「知道了 / 稍后提醒 / 标记完成」三个动作。
+ *
+ * ## 响铃与页面同生命周期
+ *
+ * 页面会**绑定** [AlarmRingService]：页面被销毁（返回键、上滑划掉、系统回收）时系统自动解绑，
+ * 服务侧随即停铃。这是为了修掉「界面没了，铃声还在响」——只靠 `finish()` 里调一次
+ * `stopService` 是不够的，那条路径在返回键 / 划掉 / 被系统回收时根本不会执行。
  */
 class AlarmActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
+
+    /** 响铃服务的绑定句柄：拿到它可以「立刻静音」，不必等服务走完销毁流程。 */
+    private var ringBinder: AlarmRingService.LocalBinder? = null
+    private var serviceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            ringBinder = service as? AlarmRingService.LocalBinder
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            ringBinder = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,6 +103,16 @@ class AlarmActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val todoId = intent.getLongExtra(EXTRA_TODO_ID, -1L)
+        // 与响铃服务绑定（服务不存在时由系统按需创建）：
+        // 页面一销毁就解绑，服务侧靠解绑事件停铃——这是「关门即静音」的关键一步。
+        serviceBound = runCatching {
+            bindService(
+                Intent(this, AlarmRingService::class.java),
+                serviceConnection,
+                Context.BIND_AUTO_CREATE,
+            )
+        }.onFailure { Log.w(TAG, "绑定响铃服务失败：${it.message}") }.getOrDefault(false)
+
         // 正常情况下由 AlarmRingService 在响铃；只有被通知的全屏 Intent 直接拉起时
         // （锁屏场景）才由本页自己补响，避免两处同时响。
         if (!AlarmRingService.isRinging) {
@@ -105,12 +140,23 @@ class AlarmActivity : ComponentActivity() {
 
     /** 用户处理完提醒：停掉铃声与服务，再关闭页面。 */
     private fun dismissAlarm() {
+        // 先立刻静音（经绑定句柄直达服务，不用等服务走完销毁流程），再无绑定则停服务
+        ringBinder?.stopRingingNow()
         AlarmRingService.stop(this)
         finish()
     }
 
     override fun onDestroy() {
+        // 本页自己补响的那条铃声
         stopRinging()
+        // 解绑即「告诉服务：界面没了」。服务的 onUnbind 会停铃并自杀，
+        // 因此返回键、上滑划掉、系统回收这三条路径都不会留下还在响的闹钟。
+        if (serviceBound) {
+            runCatching { unbindService(serviceConnection) }
+                .onFailure { Log.w(TAG, "解绑响铃服务失败：${it.message}") }
+            serviceBound = false
+        }
+        ringBinder = null
         super.onDestroy()
     }
 
@@ -176,6 +222,9 @@ class AlarmActivity : ComponentActivity() {
     companion object {
         const val ACTION_SHOW_ALARM = "com.example.todolist.action.SHOW_ALARM"
         const val EXTRA_TODO_ID = "extra_todo_id"
+
+        /** 日志标签，与 [AlarmRingService.TAG] 配合过滤「闹钟起停」全过程。 */
+        const val TAG = "TodoAlarm"
     }
 }
 

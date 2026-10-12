@@ -30,16 +30,39 @@ import java.util.Locale
  *   行为接近系统闹钟。
  *
  * 方法声明为 open 是为了让测试能覆盖「发送」这一步，只验证业务判断。
+ *
+ * ## 为什么有两个渠道
+ *
+ * 通知渠道一旦创建，**声音就改不了了**——用户手机上早已存在旧渠道，代码里再
+ * `setSound` 也不会让它出声（这正是「通知没有声音」的根因）。因此这里用两个固定
+ * 渠道（有声 / 静音）按设置二选一，而不是去改一个已存在渠道的声音。
+ * 同时把更早版本建出来的旧渠道删掉，避免系统通知设置里堆一串同名项。
  */
-open class NotificationHelper(private val context: Context) {
+open class NotificationHelper(
+    private val context: Context,
+    /** 通知是否出声；由设置页的开关决定，默认有声。 */
+    private val soundEnabled: () -> Boolean = { true },
+) {
 
     /** 幂等创建渠道；Application 启动时调用一次即可。 */
     open fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
 
-        val channel = NotificationChannel(
+        // 旧版本建的渠道声音不可改，留着只会在系统设置里显示成「静音」的迷惑项
+        runCatching { manager.deleteNotificationChannel(LEGACY_CHANNEL_ID) }
+
+        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+            manager.createNotificationChannel(soundChannel())
+        }
+        if (manager.getNotificationChannel(CHANNEL_ID_SILENT) == null) {
+            manager.createNotificationChannel(silentChannel())
+        }
+    }
+
+    /** 有声渠道：显式给提示音，避免部分 ROM 建出「静音」渠道。 */
+    private fun soundChannel(): NotificationChannel =
+        NotificationChannel(
             CHANNEL_ID,
             context.getString(R.string.notif_channel_name),
             // 闹钟式提醒需要能绕过免打扰并点亮屏幕
@@ -50,8 +73,6 @@ open class NotificationHelper(private val context: Context) {
             // 让渠道声音与震动在锁屏上也能触发
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
-            // 显式指定提示音：只设 IMPORTANCE_HIGH 而不给 sound，
-            // 部分 ROM 会建出「静音」渠道，用户反馈过通知没声音
             setSound(
                 android.media.RingtoneManager.getDefaultUri(
                     android.media.RingtoneManager.TYPE_NOTIFICATION,
@@ -62,8 +83,28 @@ open class NotificationHelper(private val context: Context) {
                     .build(),
             )
         }
-        manager.createNotificationChannel(channel)
-    }
+
+    /**
+     * 静音渠道。
+     *
+     * 仍然保持 [NotificationManager.IMPORTANCE_HIGH]：用户关掉的是「声音」，
+     * 不是「提醒」本身——横幅、下拉通知、锁屏显示都还要照常。
+     * 不给 sound 也不开振动，系统因此不会出声。
+     */
+    private fun silentChannel(): NotificationChannel =
+        NotificationChannel(
+            CHANNEL_ID_SILENT,
+            context.getString(R.string.notif_channel_name_silent),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = context.getString(R.string.notif_channel_desc_silent)
+            enableVibration(false)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            setSound(null, null)
+        }
+
+    /** 当前应该用哪个渠道。 */
+    open fun channelId(): String = if (soundEnabled()) CHANNEL_ID else CHANNEL_ID_SILENT
 
     /** 是否可以向用户弹通知（Android 13+ 需要运行时权限）。 */
     open fun canPostNotifications(): Boolean {
@@ -83,7 +124,7 @@ open class NotificationHelper(private val context: Context) {
         val timeText = formatRange(todo)
         val text = todoText(timeText)
 
-        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, channelId())
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setContentTitle(todo.name)
             .setContentText(text)
@@ -91,7 +132,6 @@ open class NotificationHelper(private val context: Context) {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
             .setContentIntent(contentIntent(todo.id))
             // 两个就地操作：真机上后台拉起界面可能被系统拦掉（尤其没有精确闹钟权限时），
             // 这时通知就是唯一的交互面，必须能直接完成或稍后提醒。
@@ -220,7 +260,21 @@ open class NotificationHelper(private val context: Context) {
     }
 
     companion object {
-        const val CHANNEL_ID = "todo_reminder"
+        /**
+         * 有声提醒渠道。
+         *
+         * 注意 id 里的 `v2`：早先版本用 `todo_reminder` 建过渠道且**没有声音**，
+         * 而渠道创建后声音不可更改，老用户手机上那条渠道永远是静音的。
+         * 换一个新的 id 才能在老设备上真正拿到「响一下」的效果。
+         */
+        const val CHANNEL_ID = "todo_reminder_v2"
+
+        /** 静音提醒渠道：用户关掉「通知提示音」后走这条。 */
+        const val CHANNEL_ID_SILENT = "todo_reminder_silent_v2"
+
+        /** 老版本留下的残留渠道，启动时清掉。 */
+        const val LEGACY_CHANNEL_ID = "todo_reminder"
+
         const val ACTION_OPEN_TODO = "com.example.todolist.action.OPEN_TODO"
 
         /** 日志标签：按它过滤即可看到提醒发送情况。 */

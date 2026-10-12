@@ -40,7 +40,75 @@ class NotificationHelperTest {
         val channel = manager.getNotificationChannel(NotificationHelper.CHANNEL_ID)
         assertThat(channel).isNotNull()
         assertThat(channel.importance).isEqualTo(NotificationManager.IMPORTANCE_HIGH)
-        assertThat(channel.name.toString()).isEqualTo("待办提醒")
+        assertThat(channel.name.toString()).isEqualTo("待办提醒（有声）")
+        // 渠道必须有声音：早先版本建出的渠道没声音，而渠道一旦创建就改不了，
+        // 这正是「通知不响」的根因，因此这里把「有声」当成硬约束断言下来。
+        assertThat(channel.sound).isNotNull()
+    }
+
+    @Test
+    fun `静音渠道存在且没有声音`() {
+        helper.ensureChannel()
+
+        val silent = manager.getNotificationChannel(NotificationHelper.CHANNEL_ID_SILENT)
+        assertThat(silent).isNotNull()
+        // 重要性仍为高：用户关掉的是声音，不是提醒本身
+        assertThat(silent.importance).isEqualTo(NotificationManager.IMPORTANCE_HIGH)
+        assertThat(silent.sound).isNull()
+    }
+
+    @Test
+    fun `关掉提示音后走静音渠道`() {
+        val silentHelper = NotificationHelper(context, soundEnabled = { false })
+        silentHelper.ensureChannel()
+
+        assertThat(silentHelper.channelId()).isEqualTo(NotificationHelper.CHANNEL_ID_SILENT)
+
+        silentHelper.notifyReminder(TestData.todo(id = 21L))
+
+        val posted = shadowOf(manager).getNotification(NotificationHelper.notificationIdOf(21L))
+        assertThat(posted).isNotNull()
+        assertThat(posted.channelId).isEqualTo(NotificationHelper.CHANNEL_ID_SILENT)
+    }
+
+    @Test
+    fun `开着提示音时走有声渠道`() {
+        val soundHelper = NotificationHelper(context, soundEnabled = { true })
+        soundHelper.ensureChannel()
+        soundHelper.notifyReminder(TestData.todo(id = 22L))
+
+        val posted = shadowOf(manager).getNotification(NotificationHelper.notificationIdOf(22L))
+        assertThat(posted).isNotNull()
+        assertThat(posted.channelId).isEqualTo(NotificationHelper.CHANNEL_ID)
+    }
+
+    @Test
+    fun `提示音开关是运行时生效的`() {
+        var sound = false
+        val dynamic = NotificationHelper(context, soundEnabled = { sound })
+        dynamic.ensureChannel()
+
+        assertThat(dynamic.channelId()).isEqualTo(NotificationHelper.CHANNEL_ID_SILENT)
+        // 开关是取值函数而不是构造时的快照：改完立刻生效，不需要重启应用
+        sound = true
+        assertThat(dynamic.channelId()).isEqualTo(NotificationHelper.CHANNEL_ID)
+    }
+
+    @Test
+    fun `建渠道时会清掉旧版本留下的残留渠道`() {
+        // 模拟从老版本升级上来：旧渠道已经存在于系统里
+        manager.createNotificationChannel(
+            android.app.NotificationChannel(
+                NotificationHelper.LEGACY_CHANNEL_ID,
+                "待办提醒",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
+        assertThat(manager.getNotificationChannel(NotificationHelper.LEGACY_CHANNEL_ID)).isNotNull()
+
+        helper.ensureChannel()
+
+        assertThat(manager.getNotificationChannel(NotificationHelper.LEGACY_CHANNEL_ID)).isNull()
     }
 
     @Test

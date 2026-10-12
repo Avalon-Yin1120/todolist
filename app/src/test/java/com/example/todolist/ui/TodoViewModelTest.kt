@@ -457,4 +457,82 @@ class TodoViewModelTest {
         settle()
         assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.MAIN)
     }
+
+    @Test
+    fun `从设置页进入检查页后返回设置页`() = runTest(testDispatcher) {
+        settle()
+        viewModel.openSettings()
+        settle()
+
+        viewModel.openReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.REMINDER_HEALTH)
+
+        // 返回应回到「进来的那一页」，否则用户想接着改别的设置项就得重新点一遍
+        viewModel.closeReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.SETTINGS)
+    }
+
+    @Test
+    fun `关于页与隐私页从设置页进出`() = runTest(testDispatcher) {
+        settle()
+        viewModel.openSettings()
+        settle()
+
+        viewModel.openAbout()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.ABOUT)
+
+        viewModel.closeAbout()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.SETTINGS)
+
+        viewModel.openPrivacy()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.PRIVACY)
+
+        viewModel.closePrivacy()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.SETTINGS)
+    }
+
+    @Test
+    fun `从关于页进入检查页后返回关于页`() = runTest(testDispatcher) {
+        settle()
+        viewModel.openSettings()
+        viewModel.openAbout()
+        settle()
+
+        viewModel.openReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.REMINDER_HEALTH)
+
+        viewModel.closeReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.ABOUT)
+    }
+
+    @Test
+    fun `通知提示音开关会被写入设置并读回`() = runTest(testDispatcher) {
+        settle()
+        assertThat(viewModel.uiState.value.settings.notificationSound).isTrue()
+
+        viewModel.changeSetting(SettingsChange.NotificationSound(false))
+        settle()
+
+        assertThat(viewModel.uiState.value.settings.notificationSound).isFalse()
+        // 必须落到设置存储里，而不只是改内存里的快照
+        assertThat(settings.notificationSound).isFalse()
+    }
+
+    @Test
+    fun `界面状态里带有版本信息`() = runTest(testDispatcher) {
+        settle()
+
+        val version = viewModel.uiState.value.version
+        assertThat(version.packageName).contains("todolist")
+        assertThat(version.versionCode).isGreaterThan(0)
+        assertThat(version.shortLabel()).contains("（")
+    }
 }

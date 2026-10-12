@@ -40,7 +40,9 @@ class ReminderActionReceiver : BroadcastReceiver() {
                         Log.i(TAG, "通知里直接完成：todo=$todoId")
                         graph.coordinator.setDone(todoId, true)
                         graph.notificationHelper.cancel(todoId)
-                        // 闹钟式可能正在响铃，一并停掉
+                        // 闹钟式可能正在响铃：先立刻静音（闹钟页若绑着服务，
+                        // 单靠 stopService 要等解绑才生效），再停掉服务
+                        AlarmRingService.muteNow()
                         AlarmRingService.stop(context)
                     }
 
@@ -48,6 +50,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
                         Log.i(TAG, "稍后提醒 $SNOOZE_MINUTES 分钟：todo=$todoId")
                         scheduleSnooze(context, todoId)
                         graph.notificationHelper.cancel(todoId)
+                        AlarmRingService.muteNow()
                         AlarmRingService.stop(context)
                     }
 
