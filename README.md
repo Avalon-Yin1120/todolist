@@ -451,7 +451,7 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
 | 模拟器冷启动 | 约 60s+ | **约 20s** |
 | 应用冷启动（`am start -W` TotalTime） | — | **2.27s** |
 | 一次完整 instrumented 测试（构建+安装+28 个用例） | 2–3 分钟 | **约 45–60s** |
-| 完整单测（224 用例 / 15 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
+| 完整单测（224 用例 / 14 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
 
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
 以及把 ViewModel 里常驻的每秒 `while(true)` 轮询改成按需冷流
