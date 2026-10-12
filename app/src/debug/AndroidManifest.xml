@@ -34,6 +34,15 @@
                 <action android:name="com.example.todolist.debug.RING_ALARM" />
             </intent-filter>
         </receiver>
+
+        <!-- 造一条「马上要提醒」的待办，用于实测后台/锁屏到点是否真的响 -->
+        <receiver
+            android:name=".debug.DebugSeedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.todolist.debug.SEED_TODO" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

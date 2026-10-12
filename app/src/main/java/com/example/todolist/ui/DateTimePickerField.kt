@@ -57,6 +57,10 @@ import java.util.Locale
  * 每次打开对话框都重新初始化 picker 状态（用打开次数作 remember key），
  * 因此总是从当前值开始，不会出现「对话框里还是上一次的值」。
  * 时间戳统一为 epoch 毫秒，内部按本地时区解释年月日与时分，跨时区/夏令时都正确。
+ *
+ * [showDate] = false 的「只选时间」模式：日期由调用方（例如重复范围）决定，
+ * 这里只显示与修改时分——`_date_button` 不再生成，文本框只渲染 `HH:mm`。
+ * 底层时间戳仍然带着原来的日期，只改时间不会把日期挪到别的天。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +72,8 @@ fun DateTimePickerField(
     tagPrefix: String = label,
     /** 字段为空时，日期选择器默认落在哪一天 */
     defaultDate: Long = System.currentTimeMillis(),
+    /** false = 只选时间：不显示「日期」按钮，文本框也只显示 HH:mm。 */
+    showDate: Boolean = true,
 ) {
     val zone = remember { ZoneId.systemDefault() }
     val local = value?.let { Instant.ofEpochMilli(it).atZone(zone) }
@@ -91,7 +97,10 @@ fun DateTimePickerField(
 
     Column(modifier = modifier) {
         OutlinedTextField(
-            value = local?.format(DISPLAY_FORMATTER).orEmpty(),
+            // 只选时间时不再显示日期：那部分由重复范围决定，显示出来只会让人以为能改
+            value = local
+                ?.format(if (showDate) DISPLAY_FORMATTER else TIME_FORMATTER)
+                .orEmpty(),
             onValueChange = { /* 只读展示 */ },
             readOnly = true,
             singleLine = true,
@@ -100,8 +109,14 @@ fun DateTimePickerField(
                 .fillMaxWidth()
                 .testTag("${tagPrefix}_field")
                 .clickable {
-                    dateOpenCount++
-                    showDatePicker = true
+                    // 点整块打开的是当前唯一能改的那个选择器
+                    if (showDate) {
+                        dateOpenCount++
+                        showDatePicker = true
+                    } else {
+                        timeOpenCount++
+                        showTimePicker = true
+                    }
                 },
         )
 
@@ -111,16 +126,18 @@ fun DateTimePickerField(
                 .padding(top = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedButton(
-                onClick = {
-                    dateOpenCount++
-                    showDatePicker = true
-                },
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("${tagPrefix}_date_button"),
-            ) {
-                Text("日期 ${local?.format(DATE_FORMATTER) ?: "未设置"}")
+            if (showDate) {
+                OutlinedButton(
+                    onClick = {
+                        dateOpenCount++
+                        showDatePicker = true
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("${tagPrefix}_date_button"),
+                ) {
+                    Text("日期 ${local?.format(DATE_FORMATTER) ?: "未设置"}")
+                }
             }
             OutlinedButton(
                 onClick = {

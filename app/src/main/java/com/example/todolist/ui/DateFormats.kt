@@ -26,14 +26,23 @@ object DateFormats {
     /** 紧凑日期：5 月 11 日。 */
     fun shortDate(date: LocalDate): String = date.format(SHORT_DATE)
 
-    /** 周视图标题：5 月 11 日 - 5 月 17 日。 */
-    fun dateRange(start: LocalDate, end: LocalDate): String {
-        val sameMonth = start.year == end.year && start.month == end.month
-        return if (sameMonth) {
-            "${shortDate(start)} - ${end.dayOfMonth} 日"
-        } else {
-            "${shortDate(start)} - ${shortDate(end)}"
-        }
+    /**
+     * 周视图标题。
+     *
+     * 必须带年份：周标题只写「5 月 11 日 - 17 日」时，用户翻到别的年份也看不出来
+     * （月视图写「2026 年 5 月」、日视图写完整日期，只有周视图缺年份）。
+     *
+     * * 同年同月：`2026 年 5 月 11 日 - 17 日`
+     * * 同年跨月：`2026 年 10 月 26 日 - 11 月 1 日`
+     * * 跨年：`2026 年 12 月 28 日 - 2027 年 1 月 3 日`
+     */
+    fun dateRange(start: LocalDate, end: LocalDate): String = when {
+        start.year != end.year ->
+            "${start.year} 年 ${shortDate(start)} - ${end.year} 年 ${shortDate(end)}"
+        start.month == end.month ->
+            "${start.year} 年 ${shortDate(start)} - ${end.dayOfMonth} 日"
+        else ->
+            "${start.year} 年 ${shortDate(start)} - ${shortDate(end)}"
     }
 
     /** 月视图标题：2026 年 5 月。 */

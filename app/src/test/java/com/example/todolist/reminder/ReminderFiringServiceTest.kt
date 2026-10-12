@@ -27,6 +27,7 @@ class ReminderFiringServiceTest {
     private lateinit var repository: TodoRepository
     private lateinit var exact: FakeReminderScheduler
     private lateinit var inexact: FakeReminderScheduler
+    private lateinit var work: FakeReminderScheduler
     private lateinit var coordinator: SchedulingCoordinator
     private lateinit var service: ReminderFiringService
     private val fired = mutableListOf<Long>()
@@ -38,11 +39,13 @@ class ReminderFiringServiceTest {
         repository = TodoRepository(FakeTodoDao())
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
+        work = FakeReminderScheduler("work")
         fired.clear()
         coordinator = SchedulingCoordinator(
             repository = repository,
             exactScheduler = exact,
             inexactScheduler = inexact,
+            workScheduler = work,
             clock = FakeClock(now),
             exactAlarmPermission = FakeExactAlarmPermission(granted = true),
             zone = TestData.ZONE,

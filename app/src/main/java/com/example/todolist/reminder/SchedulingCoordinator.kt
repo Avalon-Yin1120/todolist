@@ -23,9 +23,20 @@ import java.time.ZoneId
  */
 class SchedulingCoordinator(
     private val repository: TodoRepository,
-    /** 精确闹钟通道；闹钟式提醒与「稍后提醒」都用它。 */
+    /** 精确闹钟通道：闹钟式提醒的主通道（`setAlarmClock`）。 */
     val exactScheduler: ReminderScheduler,
+    /**
+     * 非精确闹钟通道（`setAndAllowWhileIdle`，不需要任何权限）：
+     * 通知方式的主通道，同时充当精确通道的「保险」。
+     */
     private val inexactScheduler: ReminderScheduler,
+    /**
+     * WorkManager 通道：只作为最后一道保险。
+     *
+     * 它在国产 ROM 上最不可靠（JobScheduler 会被整体推迟到用户下次打开 App），
+     * 正因为如此才需要前面那两条 AlarmManager 通道；留着它是为了「万一闹钟也被冻结」。
+     */
+    private val workScheduler: ReminderScheduler,
     private val clock: Clock,
     private val exactAlarmPermission: ExactAlarmPermission,
     private val zone: ZoneId = ZoneId.systemDefault(),
@@ -147,6 +158,14 @@ class SchedulingCoordinator(
      * 计算该提醒哪一场并排进对应调度器；返回是否真的排定了。
      *
      * 跳过的情况：已完成；找不到未来的场次；这一场已经提醒过。
+     *
+     * 排定策略是「主通道 + 保险通道」：
+     * * 闹钟式 → 精确闹钟（`setAlarmClock`）+ 非精确闹钟（晚 [BACKSTOP_DELAY_MS]）
+     * * 通知式 → 非精确闹钟（准时）+ WorkManager（晚 [BACKSTOP_DELAY_MS]）
+     *
+     * 多排一条不会导致重复提醒：[ReminderFiringService] 会用「这一场是否已经提醒过」挡掉。
+     * 这一步是为真机（尤其 ColorOS / MIUI 这类省电激进的 ROM）准备的——
+     * 单通道一旦被冻结，用户就是「到点了什么都没发生」。
      */
     private suspend fun scheduleFor(todo: Todo): Boolean {
         val now = clock.now()
@@ -163,28 +182,44 @@ class SchedulingCoordinator(
             plan
         }
         schedulerFor(effective.strategy).schedule(effective)
+
+        val backstop = effective.copy(
+            strategy = if (effective.strategy == ReminderStrategy.EXACT_ALARM) {
+                ReminderStrategy.NOTIFICATION
+            } else {
+                ReminderStrategy.WORK_FALLBACK
+            },
+            triggerAt = effective.triggerAt + BACKSTOP_DELAY_MS,
+        )
+        schedulerFor(backstop.strategy).schedule(backstop)
         return true
     }
 
     /**
      * 下一次需要提醒的场次开始时间；不需要提醒时返回 null。
+     *
+     * 允许「迟到」[MISSED_GRACE_MS]：提醒时刻刚过去不久（例如系统深度休眠、
+     * 或被厂商省电策略冻结而没投递）时仍然返回这一场，系统会立刻补投一次。
+     * 超过宽限期就不再补发，避免装上新版本后被历史事项刷屏。
      */
     suspend fun nextOccurrenceToRemind(todo: Todo, now: Long): Long? {
         if (todo.isDone) return null
+        val graceStart = now - MISSED_GRACE_MS
 
         if (!todo.recurrence.isRecurring) {
-            // 一次性待办：提醒时刻已过就不再补发，避免装上 App 后被历史事项刷屏
+            // 一次性待办：已提醒过就不再提醒
             if (todo.remindedOccurrenceStart == todo.startAt) return null
-            return todo.startAt.takeIf { todo.startAt - todo.leadMinutes * MILLIS_PER_MINUTE > now }
+            val triggerAt = todo.startAt - todo.leadMinutes * MILLIS_PER_MINUTE
+            return todo.startAt.takeIf { triggerAt > graceStart }
         }
 
-        // 周期待办：逐场向前找第一个「还没提醒过且提醒时刻仍在未来」的场次
-        var searchAfter = now
+        // 周期待办：逐场向前找第一个「还没提醒过且提醒时刻仍在（宽限期内）未来」的场次
+        var searchAfter = graceStart
         repeat(MAX_OCCURRENCE_LOOKAHEAD) {
             val occurrence = RecurrenceExpander.nextOccurrenceAfter(todo, searchAfter, zone)
                 ?: return null
             val triggerAt = occurrence - todo.leadMinutes * MILLIS_PER_MINUTE
-            if (todo.remindedOccurrenceStart != occurrence && triggerAt > now) return occurrence
+            if (todo.remindedOccurrenceStart != occurrence && triggerAt > graceStart) return occurrence
             searchAfter = occurrence
         }
         return null
@@ -203,15 +238,28 @@ class SchedulingCoordinator(
     private fun cancelSchedules(todoId: Long) {
         exactScheduler.cancel(todoId)
         inexactScheduler.cancel(todoId)
+        workScheduler.cancel(todoId)
     }
 
     private fun schedulerFor(strategy: ReminderStrategy): ReminderScheduler = when (strategy) {
         ReminderStrategy.EXACT_ALARM -> exactScheduler
         ReminderStrategy.NOTIFICATION -> inexactScheduler
+        ReminderStrategy.WORK_FALLBACK -> workScheduler
     }
 
     private companion object {
         const val MILLIS_PER_MINUTE = 60_000L
+
+        /** 保险通道比主通道晚多久；太短会浪费电，太长则用户已经错过。 */
+        const val BACKSTOP_DELAY_MS = 3 * MILLIS_PER_MINUTE
+
+        /**
+         * 「迟到」宽限期：提醒时刻已过但在该窗口内时仍然补投一次。
+         *
+         * 取值权衡：太短则系统深休眠/被杀进程导致的漏提醒无法补救；
+         * 太长则用户打开 App 会被很久以前的提醒打扰。
+         */
+        const val MISSED_GRACE_MS = 15 * MILLIS_PER_MINUTE
 
         /** 周期规则向前搜索的最大场次数，避免异常数据导致死循环。 */
         const val MAX_OCCURRENCE_LOOKAHEAD = 400

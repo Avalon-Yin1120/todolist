@@ -2,6 +2,9 @@ package com.example.todolist.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,14 +17,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -117,7 +125,15 @@ fun TodoFormScreen(
     }
 }
 
-/** 表单字段本体，整屏表单与（历史上的）对话框共用同一份实现。 */
+/**
+ * 表单字段本体，整屏表单与（历史上的）对话框共用同一份实现。
+ *
+ * 版面按「一张卡一个主题」分成四组：名称 → 重复 → 时间 → 提醒。
+ * 重复被提到名称正下方，且用分段按钮做成整屏最重的选择：
+ * 用户最常改的就是「这件事要不要重复」，改完周期后日期也就定了，
+ * 所以重复范围、以及下面时间卡里能改什么，都由它决定。
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TodoFormContent(
     form: DraftFormStateHolder,
@@ -126,227 +142,305 @@ fun TodoFormContent(
 ) {
     val state by form.state.collectAsStateWithLifecycle()
     val errors by form.errors.collectAsStateWithLifecycle()
+    val zone = remember { ZoneId.systemDefault() }
+    val recurring = state.recurrence.isRecurring
+    // 重复态下日期不再单独选：用它把「日期到底算哪天」明确写出来
+    val effectiveStartDate = state.recurrenceStartDate?.let { parseIsoDate(it) }
+        ?: state.startAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
 
     Column(
         modifier = modifier
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(FORM_CARD_GAP),
     ) {
-        OutlinedTextField(
-            value = state.name,
-            onValueChange = form::setName,
-            label = { Text("名称") },
-            placeholder = { Text("例如：小组会议") },
-            singleLine = true,
-            isError = errors.containsKey(FormValidator.FIELD_NAME),
-            supportingText = {
-                errors[FormValidator.FIELD_NAME]?.let { Text(messageOf(it)) }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TAG_NAME_FIELD),
-        )
-
-        DateTimePickerField(
-            label = "起始时间",
-            value = state.startAt,
-            onValueChange = form::setStartAt,
-            tagPrefix = "start",
-        )
-
-        DateTimePickerField(
-            label = "终止时间",
-            value = state.endAt,
-            onValueChange = form::setEndAt,
-            tagPrefix = "end",
-        )
-
-        if (errors.containsKey(FormValidator.FIELD_RANGE)) {
-            Text(
-                text = messageOf(FormError.END_NOT_AFTER_START),
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        Text("提前提醒", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            QUICK_LEADS.forEach { minutes ->
-                FilterChip(
-                    selected = state.leadMinutes == minutes,
-                    onClick = { form.setLeadMinutes(minutes) },
-                    label = { Text(quickLeadLabel(minutes)) },
-                    modifier = Modifier.testTag("$TAG_QUICK_LEAD_PREFIX$minutes"),
-                )
-            }
-        }
-        OutlinedTextField(
-            // 用单独保存的原始文本，这样 0 可以被删掉（删空即视为准点）
-            value = state.leadInput,
-            onValueChange = form::setLeadInput,
-            label = { Text("提前量（分钟）") },
-            placeholder = { Text("留空表示准点提醒") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            isError = errors.containsKey(FormValidator.FIELD_LEAD),
-            supportingText = {
-                errors[FormValidator.FIELD_LEAD]?.let { Text(messageOf(it)) }
-                    ?: Text("0 或留空表示准点提醒")
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TAG_LEAD_FIELD),
-        )
-        Text(
-            text = "提醒时间：" + reminderPreview(state),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag(TAG_REMINDER_PREVIEW),
-        )
-
-        // 提醒方式：用户选「怎么提醒我」，不涉及「用哪种系统 API」
-        Text("提醒方式", style = MaterialTheme.typography.labelLarge)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(
-                selected = state.mode == ReminderMode.NOTIFICATION,
-                onClick = { form.setMode(ReminderMode.NOTIFICATION) },
-                label = { Text("通知") },
+        // ---------------------------------------------------------------- 名称
+        FormCard {
+            OutlinedTextField(
+                value = state.name,
+                onValueChange = form::setName,
+                label = { Text("名称") },
+                placeholder = { Text("例如：小组会议") },
+                singleLine = true,
+                isError = errors.containsKey(FormValidator.FIELD_NAME),
+                supportingText = {
+                    errors[FormValidator.FIELD_NAME]?.let { Text(messageOf(it)) }
+                },
                 modifier = Modifier
-                    .weight(1f)
-                    .testTag(TAG_MODE_NOTIFICATION),
-            )
-            FilterChip(
-                selected = state.mode == ReminderMode.ALARM,
-                onClick = { form.setMode(ReminderMode.ALARM) },
-                label = { Text("闹钟式") },
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(TAG_MODE_ALARM),
+                    .fillMaxWidth()
+                    .testTag(TAG_NAME_FIELD),
             )
         }
-        Text(
-            text = if (state.mode == ReminderMode.ALARM) {
-                "到点响铃、点亮屏幕并弹出提醒页（需要精确闹钟权限）"
-            } else {
-                "只发一条通知，安静不打扰"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
-        // 周期
-        Text("重复", style = MaterialTheme.typography.labelLarge)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Recurrence.entries.forEach { option ->
-                FilterChip(
-                    selected = state.recurrence == option,
-                    onClick = {
-                        form.setRecurrence(option)
-                        resyncDeadline(form, state)
-                    },
-                    // NONE 显示为「单次」：按钮标题写「重复」会和整行标题重复，也不像个选项
-                    label = { Text(recurrenceChipLabel(option)) },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag(TAG_RECURRENCE_PREFIX + option.name),
-                )
-            }
-        }
-
-        // 周重复：精确到星期几
-        if (state.recurrence == Recurrence.WEEKLY) {
-            Text(
-                text = "重复于哪些天",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                RecurrenceOptions.WEEK_ORDER.forEach { day ->
-                    FilterChip(
-                        selected = day in state.weekDays,
+        // ---------------------------------------------------------------- 重复
+        // 紧随名称：这是本屏最主要的选择，选完它下面才知道还能改什么。
+        FormCard(title = "重复") {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                Recurrence.entries.forEachIndexed { index, option ->
+                    SegmentedButton(
+                        selected = state.recurrence == option,
                         onClick = {
-                            form.toggleWeekDay(day)
+                            form.setRecurrence(option)
                             resyncDeadline(form, state)
                         },
-                        label = { Text(RecurrenceOptions.shortLabel(day)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag(TAG_WEEKDAY_PREFIX + day.name),
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index,
+                            count = Recurrence.entries.size,
+                        ),
+                        // 不显示选中打勾图标：四个中文标签才不会被图标挤到换行
+                        icon = {},
+                        // NONE 显示为「单次」：写「重复」会和卡片标题重复，也不像个选项
+                        label = { Text(recurrenceChipLabel(option)) },
+                        modifier = Modifier.testTag(TAG_RECURRENCE_PREFIX + option.name),
                     )
                 }
             }
-            Text(
-                text = "已选：" + weekDaysSummary(state.weekDays),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(TAG_WEEKDAYS_SUMMARY),
-            )
-        }
 
-        // 月重复：精确到几号
-        if (state.recurrence == Recurrence.MONTHLY) {
-            Text(
-                text = "重复于每月哪几天",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            RecurrenceOptions.MONTH_DAYS.chunked(7).forEach { week ->
+            // 周重复：精确到星期几
+            if (state.recurrence == Recurrence.WEEKLY) {
+                FormLabel("重复于哪些天")
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    week.forEach { day ->
-                        OutlinedButton(
+                    RecurrenceOptions.WEEK_ORDER.forEach { day ->
+                        FilterChip(
+                            selected = day in state.weekDays,
                             onClick = {
-                                form.toggleMonthDay(day)
+                                form.toggleWeekDay(day)
                                 resyncDeadline(form, state)
                             },
-                            contentPadding = PaddingValues(0.dp),
-                            colors = if (day in state.monthDays) {
-                                ButtonDefaults.outlinedButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                )
-                            } else {
-                                ButtonDefaults.outlinedButtonColors()
-                            },
+                            label = { Text(RecurrenceOptions.shortLabel(day)) },
                             modifier = Modifier
                                 .weight(1f)
-                                .testTag(TAG_MONTHDAY_PREFIX + day),
-                        ) { Text("$day", style = MaterialTheme.typography.labelMedium) }
+                                .testTag(TAG_WEEKDAY_PREFIX + day.name),
+                        )
                     }
-                    // 末行补齐占位，避免按钮被拉伸
-                    repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
+                }
+                Text(
+                    text = "已选：" + weekDaysSummary(state.weekDays),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(TAG_WEEKDAYS_SUMMARY),
+                )
+            }
+
+            // 月重复：精确到几号
+            if (state.recurrence == Recurrence.MONTHLY) {
+                FormLabel("重复于每月哪几天")
+                RecurrenceOptions.MONTH_DAYS.chunked(7).forEach { week ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        week.forEach { day ->
+                            OutlinedButton(
+                                onClick = {
+                                    form.toggleMonthDay(day)
+                                    resyncDeadline(form, state)
+                                },
+                                contentPadding = PaddingValues(0.dp),
+                                colors = if (day in state.monthDays) {
+                                    ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    )
+                                } else {
+                                    ButtonDefaults.outlinedButtonColors()
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag(TAG_MONTHDAY_PREFIX + day),
+                            ) { Text("$day", style = MaterialTheme.typography.labelMedium) }
+                        }
+                        // 末行补齐占位，避免按钮被拉伸
+                        repeat(7 - week.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
+                Text(
+                    text = monthDaysSummary(state.monthDays) + "（29/30/31 遇小月落到月末）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(TAG_MONTHDAYS_SUMMARY),
+                )
+            }
+
+            // 重复范围：紧接着规则出现，它就是「重复态下的日期来源」
+            if (recurring) {
+                RecurrenceRangeSection(form = form, state = state)
+                Text(
+                    text = "重复待办修改或删除时会询问：仅这一次，还是整个系列",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        // ---------------------------------------------------------------- 时间
+        FormCard(title = "时间") {
+            DateTimePickerField(
+                label = "起始时间",
+                value = state.startAt,
+                onValueChange = form::setStartAt,
+                tagPrefix = "start",
+                // 重复态下日期由上面的重复范围决定，这里只留时间
+                showDate = !recurring,
+            )
+
+            DateTimePickerField(
+                label = "终止时间",
+                value = state.endAt,
+                onValueChange = form::setEndAt,
+                tagPrefix = "end",
+                showDate = !recurring,
+            )
+
+            if (recurring) {
+                Text(
+                    text = "日期由上面的重复范围决定" + (
+                        effectiveStartDate?.let {
+                            "（生效起始 ${it.format(DateTimeFormatter.ISO_LOCAL_DATE)}）"
+                        } ?: ""
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (errors.containsKey(FormValidator.FIELD_RANGE)) {
+                Text(
+                    text = messageOf(FormError.END_NOT_AFTER_START),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        // ---------------------------------------------------------------- 提醒
+        FormCard(title = "提醒") {
+            FormLabel("提前提醒")
+            // FlowRow：放不下就换行，「1 天」不会再被裁掉（此前一行 5 个芯片塞不下）
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                QUICK_LEADS.forEach { minutes ->
+                    FilterChip(
+                        selected = state.leadMinutes == minutes,
+                        onClick = { form.setLeadMinutes(minutes) },
+                        label = { Text(quickLeadLabel(minutes)) },
+                        modifier = Modifier.testTag("$TAG_QUICK_LEAD_PREFIX$minutes"),
+                    )
                 }
             }
+
+            OutlinedTextField(
+                // 用单独保存的原始文本，这样 0 可以被删掉（删空即视为准点）
+                value = state.leadInput,
+                onValueChange = form::setLeadInput,
+                label = { Text("提前量（分钟）") },
+                placeholder = { Text("留空表示准点提醒") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                isError = errors.containsKey(FormValidator.FIELD_LEAD),
+                supportingText = {
+                    errors[FormValidator.FIELD_LEAD]?.let { Text(messageOf(it)) }
+                        ?: Text("0 或留空表示准点提醒")
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(TAG_LEAD_FIELD),
+            )
+
             Text(
-                text = monthDaysSummary(state.monthDays) +
-                    "（选 29/30/31 时，没有该日期的月份落到当月最后一天）",
+                text = "提醒时间：" + reminderPreview(state),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(TAG_MONTHDAYS_SUMMARY),
+                modifier = Modifier.testTag(TAG_REMINDER_PREVIEW),
+            )
+
+            // 提醒方式：用户选「怎么提醒我」，不涉及「用哪种系统 API」
+            FormLabel("提醒方式")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = state.mode == ReminderMode.NOTIFICATION,
+                    onClick = { form.setMode(ReminderMode.NOTIFICATION) },
+                    label = { Text("通知") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(TAG_MODE_NOTIFICATION),
+                )
+                FilterChip(
+                    selected = state.mode == ReminderMode.ALARM,
+                    onClick = { form.setMode(ReminderMode.ALARM) },
+                    label = { Text("闹钟式") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(TAG_MODE_ALARM),
+                )
+            }
+            Text(
+                text = if (state.mode == ReminderMode.ALARM) {
+                    "到点响铃、点亮屏幕并弹出提醒页（需要精确闹钟权限）"
+                } else {
+                    "只发一条通知，安静不打扰"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        if (state.recurrence.isRecurring) {
-            RecurrenceRangeSection(form = form, state = state)
-            Text(
-                text = "重复待办修改或删除时会询问：仅这一次，还是整个系列",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** 卡片之间的间距；与卡片内边距一起构成整套表单的留白节奏。 */
+private val FORM_CARD_GAP = 12.dp
+
+/** 表单分组卡片：统一圆角、统一 16dp 内边距，可选一行小标题。 */
+@Composable
+private fun FormCard(
+    title: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // 小标题永远排在内容最前面
+            title?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            content()
+        }
+    }
+}
+
+/** 卡片内的字段小标题，风格统一，避免各卡片各写一套字号。 */
+@Composable
+private fun FormLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 /**
@@ -382,11 +476,8 @@ private fun RecurrenceRangeSection(
     val endDate = state.recurrenceEndDate?.let { parseIsoDate(it) }
     val effectiveStart = state.recurrenceStartDate?.let { parseIsoDate(it) } ?: startDate
 
-    Text(
-        text = "重复范围",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    // 与卡片里其它小标题同一套字号，「生效起始 / 截止日期 / 次数」是一组
+    FormLabel("重复范围")
 
     // 1) 生效起始日期：留空表示从待办自身的起始日生效
     DateFieldButton(

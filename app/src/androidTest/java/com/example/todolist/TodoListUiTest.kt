@@ -318,14 +318,19 @@ class TodoListUiTest {
         composeRule.onNodeWithTag(TAG_SWIPE_AREA).assertExists()
     }
 
-    /** 某一天所在那一周的标题，与界面上的写法一致。 */
+    /** 某一天所在那一周的标题，与界面上的写法一致（周标题带年份）。 */
     private fun weekLabelOf(date: LocalDate): String {
         val start = date.with(java.time.temporal.TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val end = start.plusDays(6)
-        return if (start.year == end.year && start.month == end.month) {
-            "${start.monthValue} 月 ${start.dayOfMonth} 日 - ${end.dayOfMonth} 日"
-        } else {
-            "${start.monthValue} 月 ${start.dayOfMonth} 日 - ${end.monthValue} 月 ${end.dayOfMonth} 日"
+        return when {
+            start.year != end.year ->
+                "${start.year} 年 ${start.monthValue} 月 ${start.dayOfMonth} 日 - " +
+                    "${end.year} 年 ${end.monthValue} 月 ${end.dayOfMonth} 日"
+            start.month == end.month ->
+                "${start.year} 年 ${start.monthValue} 月 ${start.dayOfMonth} 日 - ${end.dayOfMonth} 日"
+            else ->
+                "${start.year} 年 ${start.monthValue} 月 ${start.dayOfMonth} 日 - " +
+                    "${end.monthValue} 月 ${end.dayOfMonth} 日"
         }
     }
 

@@ -36,11 +36,17 @@ class TodoViewModelTest {
     private lateinit var repository: TodoRepository
     private lateinit var exact: FakeReminderScheduler
     private lateinit var inexact: FakeReminderScheduler
+    private lateinit var work: FakeReminderScheduler
     private lateinit var permission: FakeExactAlarmPermission
     private lateinit var clock: FakeClock
     private lateinit var coordinator: SchedulingCoordinator
     private lateinit var settings: com.example.todolist.data.InMemorySettingsStore
     private lateinit var viewModel: TodoViewModel
+
+    /** 提醒可靠性相关的系统开关，可在用例里改。 */
+    private var notificationsAllowed = true
+    private var fullScreenAllowed = true
+    private var oemGuideNeeded = false
 
     private val now = TestData.NOW
     private val testDispatcher = StandardTestDispatcher()
@@ -51,6 +57,7 @@ class TodoViewModelTest {
         repository = TodoRepository(FakeTodoDao())
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
+        work = FakeReminderScheduler("work")
         permission = FakeExactAlarmPermission(granted = true)
         settings = com.example.todolist.data.InMemorySettingsStore(
             // 默认用通知方式：这样「排定到非精确调度器」的断言才有意义。
@@ -58,7 +65,15 @@ class TodoViewModelTest {
             useAlarmForReminders = false,
         )
         clock = FakeClock(now)
-        coordinator = SchedulingCoordinator(repository, exact, inexact, clock, permission, TestData.ZONE)
+        coordinator = SchedulingCoordinator(
+            repository = repository,
+            exactScheduler = exact,
+            inexactScheduler = inexact,
+            workScheduler = work,
+            clock = clock,
+            exactAlarmPermission = permission,
+            zone = TestData.ZONE,
+        )
         viewModel = TodoViewModel(
             application = ApplicationProvider.getApplicationContext(),
             repository = repository,
@@ -66,6 +81,9 @@ class TodoViewModelTest {
             settings = settings,
             clock = clock,
             canScheduleExactAlarms = { permission.granted },
+            canPostNotifications = { notificationsAllowed },
+            fullScreenIntentAllowed = { fullScreenAllowed },
+            oemBackgroundGuideNeeded = { oemGuideNeeded },
             zone = TestData.ZONE,
         )
     }
@@ -318,8 +336,7 @@ class TodoViewModelTest {
     }
 
     @Test
-    fun `翻页回写不会发跳转请求`() = runTest(testDispatcher) {
-        settle()
+    fun `翻页回写不会发跳转请求`() = runTest(testDispatcher) {        settle()
         val before = viewModel.uiState.value.jumpRequest
 
         // 这是 pager 翻页后调用的回写路径：只更新日期，不能再驱动 pager
@@ -385,5 +402,59 @@ class TodoViewModelTest {
         viewModel.selectDateSoft(monday.plusWeeks(3))
         settle()
         assertThat(viewModel.uiState.value.selectedDate).isEqualTo(monday.plusWeeks(3))
+    }
+
+    // ------------------------------------------------ 提醒可靠性检查（真机不响的首要原因）
+
+    @Test
+    fun `进入检查页时带上各项开关状态`() = runTest(testDispatcher) {
+        notificationsAllowed = false
+        fullScreenAllowed = false
+        oemGuideNeeded = true
+        val fresh = TodoViewModel(
+            application = ApplicationProvider.getApplicationContext(),
+            repository = repository,
+            coordinator = coordinator,
+            settings = settings,
+            clock = clock,
+            canScheduleExactAlarms = { permission.granted },
+            canPostNotifications = { notificationsAllowed },
+            fullScreenIntentAllowed = { fullScreenAllowed },
+            oemBackgroundGuideNeeded = { oemGuideNeeded },
+            zone = TestData.ZONE,
+        )
+        settle()
+
+        val state = fresh.uiState.value
+        assertThat(state.canPostNotifications).isFalse()
+        assertThat(state.fullScreenIntentAllowed).isFalse()
+        assertThat(state.needsOemBackgroundGuide).isTrue()
+    }
+
+    @Test
+    fun `刷新权限会一并重读通知与全屏提醒开关`() = runTest(testDispatcher) {
+        settle()
+        assertThat(viewModel.uiState.value.canPostNotifications).isTrue()
+
+        // 用户在系统设置里关掉了通知/全屏提醒，回到前台后必须能看到变化
+        notificationsAllowed = false
+        fullScreenAllowed = false
+        viewModel.refreshPermissions()
+        settle()
+
+        assertThat(viewModel.uiState.value.canPostNotifications).isFalse()
+        assertThat(viewModel.uiState.value.fullScreenIntentAllowed).isFalse()
+    }
+
+    @Test
+    fun `打开与关闭提醒可靠性检查页`() = runTest(testDispatcher) {
+        settle()
+        viewModel.openReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.REMINDER_HEALTH)
+
+        viewModel.closeReminderHealth()
+        settle()
+        assertThat(viewModel.uiState.value.screen).isEqualTo(Screen.MAIN)
     }
 }

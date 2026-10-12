@@ -46,6 +46,8 @@ fun SettingsScreen(
     /** 是否已允许后台运行（电池优化白名单） */
     batteryOptimizationIgnored: Boolean = true,
     onRequestIgnoreBatteryOptimization: () -> Unit = {},
+    /** 打开「提醒可靠性检查」页 */
+    onOpenReminderHealth: () -> Unit = {},
 ) {
     Scaffold(
         modifier = Modifier.testTag(TAG_SETTINGS_SCREEN),
@@ -79,6 +81,12 @@ fun SettingsScreen(
                 tag = TAG_SETTING_ALARM,
                 onCheckedChange = { onChange(SettingsChange.UseAlarm(it)) },
             )
+
+            // 一站式检查：通知权限 / 精确闹钟 / 后台运行 / 全屏提醒 / 国产 ROM 自启动
+            TextButton(
+                onClick = onOpenReminderHealth,
+                modifier = Modifier.testTag(TAG_OPEN_REMINDER_HEALTH),
+            ) { Text("提醒可靠性检查（到点不响时先看这里）") }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -209,3 +217,4 @@ const val TAG_SETTING_ALARM = "setting_alarm"
 const val TAG_SETTING_CONFIRM_DELETE = "setting_confirm_delete"
 const val TAG_SETTING_WARN_OVERLAP = "setting_warn_overlap"
 const val TAG_BATTERY_EXEMPT = "battery_exempt"
+const val TAG_OPEN_REMINDER_HEALTH = "open_reminder_health"

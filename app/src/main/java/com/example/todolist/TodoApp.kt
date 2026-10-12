@@ -107,14 +107,30 @@ class AppGraph(application: Application) {
     /** 用户设置：提醒方式、记住的提前量、是否二次确认等。 */
     val settings: SettingsStore = SharedPreferencesSettingsStore(application)
 
-    private val exactScheduler: ReminderScheduler = AlarmReminderScheduler(application)
+    /**
+     * 精确闹钟通道：闹钟式提醒的主通道。
+     *
+     * 用 `setAlarmClock`（系统级「用户可见的闹钟」），国产 ROM 的省电策略普遍对它放行。
+     */
+    private val exactScheduler: ReminderScheduler = AlarmReminderScheduler(application, exact = true)
 
-    private val inexactScheduler: ReminderScheduler = WorkReminderScheduler(application)
+    /**
+     * 非精确闹钟通道：通知方式的主通道，同时是精确通道的保险。
+     *
+     * 不需要任何特殊权限，且比 WorkManager 可靠——JobScheduler 在国产 ROM 上
+     * 会被整体推迟到「用户下次打开 App」，而闹钟即使 Doze 也会被投递。
+     */
+    private val inexactScheduler: ReminderScheduler =
+        AlarmReminderScheduler(application, exact = false)
+
+    /** WorkManager 通道：只作为最后一道保险。 */
+    private val workScheduler: ReminderScheduler = WorkReminderScheduler(application)
 
     val coordinator: SchedulingCoordinator = SchedulingCoordinator(
         repository = repository,
         exactScheduler = exactScheduler,
         inexactScheduler = inexactScheduler,
+        workScheduler = workScheduler,
         clock = clock,
         exactAlarmPermission = exactAlarmPermission,
     )

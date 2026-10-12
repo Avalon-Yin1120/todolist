@@ -13,6 +13,26 @@ import org.junit.Test
  */
 class DateFormatsTest {
 
+    // -------------------------------------------------- 周视图标题带年份（第 4 项）
+
+    @Test
+    fun `周标题同年同月带年份`() {
+        val label = DateFormats.dateRange(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 11))
+        assertThat(label).isEqualTo("2026 年 10 月 5 日 - 11 日")
+    }
+
+    @Test
+    fun `周标题同年跨月带年份`() {
+        val label = DateFormats.dateRange(LocalDate.of(2026, 10, 26), LocalDate.of(2026, 11, 1))
+        assertThat(label).isEqualTo("2026 年 10 月 26 日 - 11 月 1 日")
+    }
+
+    @Test
+    fun `周标题跨年时两年都写出来`() {
+        val label = DateFormats.dateRange(LocalDate.of(2026, 12, 28), LocalDate.of(2027, 1, 3))
+        assertThat(label).isEqualTo("2026 年 12 月 28 日 - 2027 年 1 月 3 日")
+    }
+
     // -------------------------------------------------- 手动输入年月日（第 9 项）
 
     @Test

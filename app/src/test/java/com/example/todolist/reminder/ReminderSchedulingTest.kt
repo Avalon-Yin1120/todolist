@@ -26,6 +26,7 @@ class ReminderSchedulingTest {
     private lateinit var repository: TodoRepository
     private lateinit var exact: FakeReminderScheduler
     private lateinit var inexact: FakeReminderScheduler
+    private lateinit var work: FakeReminderScheduler
     private lateinit var permission: FakeExactAlarmPermission
     private lateinit var clock: FakeClock
     private lateinit var coordinator: SchedulingCoordinator
@@ -37,12 +38,14 @@ class ReminderSchedulingTest {
         repository = TodoRepository(FakeTodoDao())
         exact = FakeReminderScheduler("exact")
         inexact = FakeReminderScheduler("inexact")
+        work = FakeReminderScheduler("work")
         permission = FakeExactAlarmPermission(granted = true)
         clock = FakeClock(now)
         coordinator = SchedulingCoordinator(
             repository = repository,
             exactScheduler = exact,
             inexactScheduler = inexact,
+            workScheduler = work,
             clock = clock,
             exactAlarmPermission = permission,
             zone = TestData.ZONE,
@@ -81,8 +84,45 @@ class ReminderSchedulingTest {
         val result = coordinator.create(draft(mode = ReminderMode.ALARM))
 
         assertThat(exact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
-        assertThat(inexact.planFor(result.todoId)).isNull()
+        assertThat(work.planFor(result.todoId)).isNull()
         assertThat(result.degraded).isFalse()
+    }
+
+    // -------------------------------------------------- 保险通道（真机漏提醒的兜底）
+
+    @Test
+    fun `通知方式会额外排一条 WorkManager 保险`() = runTest {
+        val result = coordinator.create(draft(mode = ReminderMode.NOTIFICATION))
+
+        // 主通道准时，保险晚 3 分钟；重复触发由「这一场是否已提醒」挡掉
+        assertThat(inexact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
+        assertThat(work.planFor(result.todoId)?.triggerAt)
+            .isEqualTo(now + 63 * TestData.MINUTE)
+        assertThat(work.strategyFor(result.todoId)).isEqualTo(ReminderStrategy.WORK_FALLBACK)
+        assertThat(work.planFor(result.todoId)?.occurrenceStart)
+            .isEqualTo(inexact.planFor(result.todoId)?.occurrenceStart)
+    }
+
+    @Test
+    fun `闹钟方式会额外排一条非精确闹钟保险`() = runTest {
+        val result = coordinator.create(draft(mode = ReminderMode.ALARM))
+
+        assertThat(exact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
+        assertThat(inexact.planFor(result.todoId)?.triggerAt)
+            .isEqualTo(now + 63 * TestData.MINUTE)
+        assertThat(inexact.strategyFor(result.todoId)).isEqualTo(ReminderStrategy.NOTIFICATION)
+        assertThat(work.planFor(result.todoId)).isNull()
+    }
+
+    @Test
+    fun `降级时主通道走非精确闹钟且保险走 WorkManager`() = runTest {
+        permission.granted = false
+        val result = coordinator.create(draft(mode = ReminderMode.ALARM))
+
+        assertThat(result.degraded).isTrue()
+        assertThat(exact.planFor(result.todoId)).isNull()
+        assertThat(inexact.planFor(result.todoId)?.triggerAt).isEqualTo(now + 60 * TestData.MINUTE)
+        assertThat(work.planFor(result.todoId)?.triggerAt).isEqualTo(now + 63 * TestData.MINUTE)
     }
 
     @Test
@@ -188,8 +228,11 @@ class ReminderSchedulingTest {
         coordinator.update(draft(mode = ReminderMode.ALARM).copy(id = existing.id))
 
         assertThat(inexact.cancelled).contains(existing.id)
-        assertThat(inexact.planFor(existing.id)).isNull()
         assertThat(exact.planFor(existing.id)).isNotNull()
+        // 换成闹钟式之后，非精确通道上留下的是「保险」，而不是原来那条准时的主提醒
+        assertThat(inexact.planFor(existing.id)?.strategy).isEqualTo(ReminderStrategy.NOTIFICATION)
+        assertThat(inexact.planFor(existing.id)?.triggerAt)
+            .isEqualTo(now + 63 * TestData.MINUTE)
     }
 
     @Test
@@ -314,7 +357,8 @@ class ReminderSchedulingTest {
             draft(name = "已完成").toTodo(existing = null, now = now).copy(isDone = true)
         )
         repository.insert(
-            draft(name = "过期", startAt = now - 10 * TestData.MINUTE)
+            // 超出宽限期很久的历史事项：不补发，否则装上新版本会被旧事项刷屏
+            draft(name = "很久以前", startAt = now - 120 * TestData.MINUTE)
                 .toTodo(existing = null, now = now)
         )
 
@@ -322,5 +366,42 @@ class ReminderSchedulingTest {
 
         assertThat(scheduledCount).isEqualTo(1)
         assertThat(inexact.scheduled).hasSize(1)
+    }
+
+    // -------------------------------------------------- 迟到的提醒（宽限期）
+
+    @Test
+    fun `刚过去不久的提醒仍会补排一次`() = runTest {
+        // 系统深休眠/被厂商冻结导致没投递时，用户打开 App 还能收到这条提醒
+        val result = coordinator.create(
+            draft(name = "刚错过", startAt = now - 5 * TestData.MINUTE)
+        )
+
+        // 触发时刻已过 → 系统会立刻投递
+        assertThat(inexact.planFor(result.todoId)?.triggerAt).isLessThan(now)
+    }
+
+    @Test
+    fun `超过宽限期的提醒不再补发`() = runTest {
+        val result = coordinator.create(
+            draft(name = "很久以前", startAt = now - 30 * TestData.MINUTE)
+        )
+
+        assertThat(inexact.planFor(result.todoId)).isNull()
+        assertThat(work.planFor(result.todoId)).isNull()
+    }
+
+    @Test
+    fun `已经提醒过的场次不会因为宽限期重复提醒`() = runTest {
+        val start = now + 60 * TestData.MINUTE
+        val created = coordinator.create(draft(startAt = start))
+        coordinator.markRemindedAndReschedule(created.todoId, start)
+
+        // 把时钟拨到触发时刻之后 5 分钟再对账
+        clock.initial = start + 5 * TestData.MINUTE
+        coordinator.reconcileAll()
+
+        // 这一场已经提醒过，不能再排一次
+        assertThat(inexact.planFor(created.todoId)).isNull()
     }
 }

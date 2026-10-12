@@ -33,7 +33,7 @@ import java.time.ZoneId
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
 /** 顶层界面：主界面与设置页。 */
-enum class Screen { MAIN, SETTINGS, FORM }
+enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH }
 
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
@@ -102,6 +102,12 @@ data class TodoUiState(
     val grouping: ListGrouping = ListGrouping.BY_TIME,
     /** 当前顶层界面：主界面、设置页或表单页 */
     val screen: Screen = Screen.MAIN,
+    /** 通知权限是否已授予（Android 13+ 需要运行时权限，系统设置里也能被关掉） */
+    val canPostNotifications: Boolean = true,
+    /** 闹钟式提醒能否弹出整屏提醒页（Android 14+ 需用户允许全屏通知） */
+    val fullScreenIntentAllowed: Boolean = true,
+    /** 当前是不是需要额外开「自启动」的国产 ROM（只影响提示文案） */
+    val needsOemBackgroundGuide: Boolean = false,
     val settings: SettingsUiState = SettingsUiState(),
     /** 表单是否打开（整屏表单页），供界面判断是否需要初始聚焦等行为 */
     val formOpen: Boolean = false,
@@ -134,6 +140,12 @@ class TodoViewModel(
     private val settings: SettingsStore,
     private val clock: Clock,
     private val canScheduleExactAlarms: () -> Boolean,
+    /** 通知权限是否已授予；默认 true 便于测试只关心其它逻辑 */
+    private val canPostNotifications: () -> Boolean = { true },
+    /** Android 14+ 的全屏通知是否被允许；默认 true */
+    private val fullScreenIntentAllowed: () -> Boolean = { true },
+    /** 是否需要提示「国产 ROM 要额外开自启动」 */
+    private val oemBackgroundGuideNeeded: () -> Boolean = { false },
     /** 后台运行（电池优化白名单）能力；为空表示不检查（测试里常用） */
     private val batteryOptimization: com.example.todolist.sys.BatteryOptimizationPermission? = null,
     private val zone: ZoneId = ZoneId.systemDefault(),
@@ -154,6 +166,9 @@ class TodoViewModel(
         LocalState(
             canScheduleExact = canScheduleExactAlarms(),
             batteryOptimizationIgnored = batteryOptimization?.isIgnoringBatteryOptimizations() ?: true,
+            canPostNotifications = canPostNotifications(),
+            fullScreenIntentAllowed = fullScreenIntentAllowed(),
+            needsOemBackgroundGuide = oemBackgroundGuideNeeded(),
             settings = readSettings(),
             // 「今天」必须取自注入的时钟/时区，而不是系统时钟：
             // 否则测试里 FakeClock 的日期和界面认的日期会不一致，
@@ -179,6 +194,9 @@ class TodoViewModel(
             jumpRequest = local.jumpRequest,
             grouping = local.grouping,
             screen = if (edit.isOpen) Screen.FORM else local.screen,
+            canPostNotifications = local.canPostNotifications,
+            fullScreenIntentAllowed = local.fullScreenIntentAllowed,
+            needsOemBackgroundGuide = local.needsOemBackgroundGuide,
             oneOffEdit = edit.oneOffSourceId != 0L,
             formOpen = edit.isOpen,
             settings = local.settings,
@@ -481,8 +499,25 @@ class TodoViewModel(
         } else {
             localState.value.notice
         }
-        updateLocal { it.copy(canScheduleExact = granted, notice = notice) }
+        updateLocal {
+            it.copy(
+                canScheduleExact = granted,
+                // 这几项用户都可能在系统设置里改，回到前台时一起重读
+                canPostNotifications = canPostNotifications(),
+                fullScreenIntentAllowed = fullScreenIntentAllowed(),
+                batteryOptimizationIgnored =
+                    batteryOptimization?.isIgnoringBatteryOptimizations()
+                        ?: it.batteryOptimizationIgnored,
+                notice = notice,
+            )
+        }
     }
+
+    /** 打开「提醒可靠性检查」页。 */
+    fun openReminderHealth() = updateLocal { it.copy(screen = Screen.REMINDER_HEALTH) }
+
+    /** 关闭「提醒可靠性检查」页，回到主界面。 */
+    fun closeReminderHealth() = updateLocal { it.copy(screen = Screen.MAIN) }
 
     fun consumeNotice() = updateLocal { it.copy(notice = null) }
 
@@ -496,6 +531,9 @@ class TodoViewModel(
     private data class LocalState(
         val canScheduleExact: Boolean,
         val batteryOptimizationIgnored: Boolean = true,
+        val canPostNotifications: Boolean = true,
+        val fullScreenIntentAllowed: Boolean = true,
+        val needsOemBackgroundGuide: Boolean = false,
         val settings: SettingsUiState,
         val notice: Notice? = null,
         val dialog: DialogRequest? = null,
@@ -529,6 +567,17 @@ class TodoViewModel(
                         clock = graph.clock,
                         canScheduleExactAlarms = {
                             graph.exactAlarmPermission.canScheduleExactAlarms()
+                        },
+                        canPostNotifications = {
+                            com.example.todolist.sys.ReminderHealth
+                                .canPostNotifications(application)
+                        },
+                        fullScreenIntentAllowed = {
+                            com.example.todolist.sys.ReminderHealth
+                                .canUseFullScreenIntent(application)
+                        },
+                        oemBackgroundGuideNeeded = {
+                            com.example.todolist.sys.ReminderHealth.needsOemBackgroundGuide()
                         },
                         batteryOptimization = graph.batteryOptimization,
                     ) as T

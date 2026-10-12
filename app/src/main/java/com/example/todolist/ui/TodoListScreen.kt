@@ -66,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.todolist.BuildConfig
 import com.example.todolist.domain.ListOrdering
 import com.example.todolist.domain.RecurrenceExpander
+import com.example.todolist.domain.ReminderMode
 import com.example.todolist.domain.ReminderTime
 import com.example.todolist.domain.Todo
 import java.time.LocalDate
@@ -145,11 +146,12 @@ fun TodoRoute(
     var lastScreen by remember { mutableStateOf(Screen.MAIN) }
     LaunchedEffect(screen) { lastScreen = screen }
 
-    // 返回键：设置页/表单页按返回应回到主界面，而不是直接退出应用
+    // 返回键：设置页/表单页/检查页按返回应回到主界面，而不是直接退出应用
     BackHandler(enabled = screen != Screen.MAIN) {
         when (screen) {
             Screen.FORM -> viewModel.dismissForm()
             Screen.SETTINGS -> viewModel.closeSettings()
+            Screen.REMINDER_HEALTH -> viewModel.closeReminderHealth()
             Screen.MAIN -> Unit
         }
     }
@@ -196,6 +198,24 @@ fun TodoRoute(
                 onRequestExactAlarmPermission = onRequestExactAlarmPermission,
                 batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
                 onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
+                onOpenReminderHealth = viewModel::openReminderHealth,
+            )
+            return@AnimatedContent
+        }
+
+        if (target == Screen.REMINDER_HEALTH) {
+            ReminderHealthScreen(
+                canPostNotifications = uiState.canPostNotifications,
+                canScheduleExact = uiState.canScheduleExact,
+                batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                fullScreenIntentAllowed = uiState.fullScreenIntentAllowed,
+                needsOemBackgroundGuide = uiState.needsOemBackgroundGuide,
+                alarmModeInUse = settings.useAlarmForReminders ||
+                    uiState.todos.any { it.mode == ReminderMode.ALARM && !it.isDone },
+                onRequestNotificationPermission = onRequestNotificationPermission,
+                onRequestExactAlarm = onRequestExactAlarmPermission,
+                onRequestIgnoreBatteryOptimization = viewModel::requestIgnoreBatteryOptimization,
+                onBack = viewModel::closeReminderHealth,
             )
             return@AnimatedContent
         }
@@ -220,6 +240,7 @@ fun TodoRoute(
             onOpenSettings = viewModel::openSettings,
             onRequestExactAlarmPermission = onRequestExactAlarmPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
+            onOpenReminderHealth = viewModel::openReminderHealth,
             form = viewModel.form,
             onDismissForm = viewModel::dismissForm,
             onSubmitForm = viewModel::submitForm,
@@ -251,6 +272,8 @@ fun TodoListScreen(
     onOpenSettings: () -> Unit,
     onRequestExactAlarmPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    /** 打开「提醒可靠性检查」页（横幅入口） */
+    onOpenReminderHealth: () -> Unit,
     form: DraftFormStateHolder,
     onDismissForm: () -> Unit,
     onSubmitForm: () -> Unit,
@@ -306,8 +329,9 @@ fun TodoListScreen(
         ) {
             PermissionBanner(
                 canScheduleExact = uiState.canScheduleExact,
-                onRequestExactAlarmPermission = onRequestExactAlarmPermission,
-                onRequestNotificationPermission = onRequestNotificationPermission,
+                canPostNotifications = uiState.canPostNotifications,
+                batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                onOpenReminderHealth = onOpenReminderHealth,
             )
 
             if (uiState.tab == NavTab.TODO) {
@@ -921,26 +945,33 @@ private fun RecurrenceScopeDialog(
 @Composable
 private fun PermissionBanner(
     canScheduleExact: Boolean,
-    onRequestExactAlarmPermission: () -> Unit,
-    onRequestNotificationPermission: () -> Unit,
+    canPostNotifications: Boolean,
+    batteryOptimizationIgnored: Boolean,
+    onOpenReminderHealth: () -> Unit,
 ) {
-    if (canScheduleExact) return
+    val missing = listOf(canScheduleExact, canPostNotifications, batteryOptimizationIgnored)
+        .count { !it }
+    if (missing == 0) return
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TAG_HEALTH_BANNER),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "精确闹钟权限未开启，闹钟式提醒会退化为普通通知",
+                text = "有 $missing 项提醒设置未开启，可能到点不提醒",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onRequestExactAlarmPermission) { Text("去开启") }
-            TextButton(onClick = onRequestNotificationPermission) { Text("通知权限") }
+            TextButton(
+                onClick = onOpenReminderHealth,
+                modifier = Modifier.testTag(TAG_HEALTH_BANNER_OPEN),
+            ) { Text("去检查") }
         }
     }
 }

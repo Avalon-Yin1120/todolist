@@ -4,11 +4,19 @@ package com.example.todolist.domain
  * [ReminderPlan] 使用的调度通道。
  */
 enum class ReminderStrategy {
-    /** 精确闹钟：AlarmManager.setExactAndAllowWhileIdle，需要精确闹钟权限。 */
+    /** 精确闹钟：AlarmManager.setAlarmClock / setExactAndAllowWhileIdle，需要精确闹钟权限。 */
     EXACT_ALARM,
 
-    /** 普通通知：WorkManager 延迟任务，无需权限，但系统可能延后。 */
+    /** 普通通知：非精确闹钟（setAndAllowWhileIdle），无需权限，系统可能延后但 Doze 下仍会投递。 */
     NOTIFICATION,
+
+    /**
+     * 最后的保险：WorkManager 延迟任务。
+     *
+     * 只在「主通道之外再兜一次」时使用——它在国产 ROM 上最不可靠
+     * （JobScheduler 会被省电策略推迟到用户下次打开 App），单独用它当主通道会漏提醒。
+     */
+    WORK_FALLBACK,
 }
 
 /**
