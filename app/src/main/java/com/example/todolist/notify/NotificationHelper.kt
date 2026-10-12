@@ -93,6 +93,18 @@ open class NotificationHelper(private val context: Context) {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(contentIntent(todo.id))
+            // 两个就地操作：真机上后台拉起界面可能被系统拦掉（尤其没有精确闹钟权限时），
+            // 这时通知就是唯一的交互面，必须能直接完成或稍后提醒。
+            .addAction(
+                R.drawable.ic_stat_reminder,
+                "完成",
+                ReminderActionReceiver.doneIntent(context, todo.id),
+            )
+            .addAction(
+                R.drawable.ic_stat_reminder,
+                "10 分钟后再提醒",
+                ReminderActionReceiver.snoozeIntent(context, todo.id),
+            )
 
         if (todo.mode == ReminderMode.ALARM) {
             // 通知本身也带全屏 Intent 作为兜底（锁屏时系统会直接拉起闹钟页），

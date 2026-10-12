@@ -27,6 +27,13 @@
             android:exported="true"
             tools:replace="android:exported" />
 
+        <!-- 通知上的「完成 / 稍后提醒」操作：导出以便用 adb 实测
+             （正式包不导出，外部应用无法伪造「完成」） -->
+        <receiver
+            android:name=".notify.ReminderActionReceiver"
+            android:exported="true"
+            tools:replace="android:exported" />
+
         <receiver
             android:name=".debug.DebugAlarmReceiver"
             android:exported="true">

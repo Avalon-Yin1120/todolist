@@ -87,6 +87,21 @@ class NotificationHelperTest {
     }
 
     @Test
+    fun `提醒通知带完成与稍后提醒两个就地操作`() {
+        helper.ensureChannel()
+        helper.notifyReminder(TestData.todo(id = 12L))
+
+        val posted = shadowOf(manager).getNotification(NotificationHelper.notificationIdOf(12L))
+        assertThat(posted).isNotNull()
+        // 真机上后台拉起界面可能被系统拦掉，通知是唯一的交互面，这两个操作必须存在
+        assertThat(posted.actions).hasLength(2)
+        assertThat(posted.actions[0].title.toString()).isEqualTo("完成")
+        assertThat(posted.actions[1].title.toString()).isEqualTo("10 分钟后再提醒")
+        assertThat(posted.actions[0].actionIntent).isNotNull()
+        assertThat(posted.actions[1].actionIntent).isNotNull()
+    }
+
+    @Test
     fun `取消后通知消失`() {
         helper.ensureChannel()
         helper.notifyReminder(TestData.todo(id = 5L))

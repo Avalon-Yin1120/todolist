@@ -55,6 +55,11 @@
             android:name=".reminder.ReminderAlarmReceiver"
             android:exported="false" />
 
+        <!-- 提醒通知上的「完成」「10 分钟后再提醒」操作 -->
+        <receiver
+            android:name=".notify.ReminderActionReceiver"
+            android:exported="false" />
+
         <!-- 开机 / 系统时间变化后重排 -->
         <receiver
             android:name=".reminder.BootReceiver"
