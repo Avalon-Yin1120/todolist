@@ -3,17 +3,17 @@
   debug 专用清单：把精确闹钟的接收器导出，便于用 adb 直接触发以验证通知渲染。
 
     adb shell am broadcast
-        -a com.example.todolist.action.FIRE_REMINDER
-        -n com.example.todolist/com.example.todolist.reminder.ReminderAlarmReceiver
+        -a com.avalonyin1120.todolist.action.FIRE_REMINDER
+        -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.reminder.ReminderAlarmReceiver
         (长整型参数 extra_todo_id 用 -el 传入)
 
   另外导出 DebugAlarmReceiver，用来实测「应用在后台 / 锁屏时闹钟到底响不响」——
   AlarmRingService 与 AlarmActivity 都不导出，adb 无法直接触发，而这一场景
   恰恰是最容易出问题（后台启动前台服务被系统限制）的地方。
 
-    adb shell am broadcast -a com.example.todolist.debug.RING_ALARM
+    adb shell am broadcast -a com.avalonyin1120.todolist.debug.RING_ALARM
         (长整型参数 extra_todo_id 用 -el 传入)
-        -n com.example.todolist/com.example.todolist.debug.DebugAlarmReceiver
+        -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.debug.DebugAlarmReceiver
 
   生产（release）构建不包含这份覆盖，接收器保持 exported="false"，
   外部应用无法伪造提醒或闹钟广播。
@@ -38,7 +38,7 @@
             android:name=".debug.DebugAlarmReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.example.todolist.debug.RING_ALARM" />
+                <action android:name="com.avalonyin1120.todolist.debug.RING_ALARM" />
             </intent-filter>
         </receiver>
 
@@ -47,7 +47,7 @@
             android:name=".debug.DebugSeedReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.example.todolist.debug.SEED_TODO" />
+                <action android:name="com.avalonyin1120.todolist.debug.SEED_TODO" />
             </intent-filter>
         </receiver>
     </application>

@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -7,18 +8,51 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+/**
+ * release 签名配置。
+ *
+ * 从 `release/keystore.properties` 读取（该目录已在 .gitignore 里排除，
+ * keystore 与口令都不进版本库）。文件不存在时**不报错**，只是退回 debug 签名——
+ * 这样别人 clone 下来只想编译/跑测试时不会被卡住，代价是产出的 release 包不能上架。
+ */
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("release/keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val hasReleaseKeystore = keystoreProps.getProperty("storeFile") != null
+
 android {
-    namespace = "com.example.todolist"
+    namespace = "com.avalonyin1120.todolist"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.todolist"
+        applicationId = "com.avalonyin1120.todolist"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "0.16.0"
+        // 1.0.0 起就是正式发布的版本号；包名也在这一版从 com.example.todolist 改了过来，
+        // 所以对 Play 而言这是一个全新应用，versionCode 从 1 重新开始。
+        // 之后每次发版只需把这两个值往上加（设置 → 版本号 里显示的就是它们）。
+        versionCode = 1
+        versionName = "1.0.0-rc1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                // minSdk 26 ⇒ Android 7.0 起就认 v2 签名，不必再打 v1（jar 签名）；
+                // v3 保留，它让将来「换签名密钥」成为可能。
+                // 实测 apksigner：v2=true、v3=true、v1=false，符合预期。
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
@@ -26,11 +60,22 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            // 发布包开启 R8 与资源压缩。Compose / Room / WorkManager 都自带 consumer 规则，
+            // 我们这边只需额外保住「由系统按类名实例化的组件」等少数入口，
+            // 见 proguard-rules.pro。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                // 没有签名材料时用 debug 签名兜底：仍能构建、能装机，用来验证
+                // 「混淆有没有把功能优化坏」；只是这样的包不能上架。
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -47,6 +92,15 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+    }
+
+    lint {
+        // release 构建默认会顺带跑 lintVital（只拦致命问题）。本机环境取不到
+        // com.android.tools.lint:lint-gradle（离线缓存里没有，Google Maven 也拉不动），
+        // 跑它会让 assembleRelease 直接失败，所以这里关掉。
+        // 它只决定「构建时是否顺手跑一遍检查」，不影响产物本身；
+        // 发布前请在有网环境执行 `.\gradlew :app:lint` 看完整报告（见 README §10）。
+        checkReleaseBuilds = false
     }
 
     testOptions {

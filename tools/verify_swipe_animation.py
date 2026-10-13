@@ -97,8 +97,8 @@ def main():
     # 先把系统动画打开，确保测的是应用自身动画
     for k in ("window_animation_scale", "transition_animation_scale", "animator_duration_scale"):
         adb("shell", "settings", "put", "global", k, "1")
-    adb("shell", "am", "force-stop", "com.example.todolist")
-    adb("shell", "am", "start", "-n", "com.example.todolist/.MainActivity")
+    adb("shell", "am", "force-stop", "com.avalonyin1120.todolist")
+    adb("shell", "am", "start", "-n", "com.avalonyin1120.todolist/.MainActivity")
     time.sleep(4)
 
     # 底部导航坐标：720x1600 下 日/周/月 约在 y=1490

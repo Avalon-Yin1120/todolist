@@ -10,3 +10,8 @@
 .cxx/
 *.apk
 *.aab
+*.jks
+*.keystore
+
+# release 签名材料：keystore 与口令绝不进版本库（丢了就无法再给同一个应用发包）
+/release/

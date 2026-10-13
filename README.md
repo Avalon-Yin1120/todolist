@@ -3,21 +3,25 @@
 Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止时间 / 提前提醒量），
 按时间顺序展示，到点提醒。支持**周期待办**、**两种提醒方式**、**日/周/月三种日历视图**。
 
+- 包名 `com.avalonyin1120.todolist`｜版本 `1.0.0-rc1`
+- **默认用通知式提醒**（安静、不需要特殊权限、通知上就能直接完成）；想要到点响铃 + 亮屏 + 全屏提醒页，
+  在设置里打开「默认使用闹钟式提醒」，或在单条待办上选「闹钟式」
+
 ## 功能一览
 
 | 功能 | 说明 |
 |---|---|
 | 新增 / 编辑待办 | **整屏表单页**（非弹窗）：名称、起始与终止时间、提前提醒量、提醒方式、周期；日期与时间可分别调整 |
-| 两种提醒方式 | **通知**（安静）或 **闹钟式**（响铃 + 点亮屏幕 + 全屏提醒页，锁屏也生效） |
+| 两种提醒方式 | **通知**（默认，安静）或 **闹钟式**（响铃 + 点亮屏幕 + 全屏提醒页，锁屏也生效） |
 | 周期待办 | 每天 / 每周 / 每月；**周重复可精确勾选星期几，月重复可精确勾选几号**（多选）；修改或删除时询问「仅这一次」还是「整个系列」 |
 | 时段配色 | 未来=淡蓝、即将=琥珀、正在=绿、过去与已完成=灰；**未来时段不允许标记完成** |
 | 智能默认 | 新建时自动沿用你上次填写的提前量与提醒方式 |
 | 顶部布局 | 标题居中，左右各一个对称图标按钮（设置 / 新增，不再悬浮遮挡列表）；标题下方显示当前视图的日期范围与倒计时 |
 | 日 / 周 / 月视图 | 默认进入日视图；日期范围在顶部明确显示（**周标题带年份**）；三者都支持左右滑动切换 |
-| **周视图 = 时间轴** | 「全天 24 小时压进一屏」不滚动；每条待办是一个**高度即时长的实心圆角色块**（不再是一小时一个方块）；时间重叠的自动**平分列宽、左右错开**；颜色与日视图同一套（未来蓝 / 即将琥珀 / 进行中绿 / 已过去灰 / 已完成浅灰）；今天那一列有一条「现在」红线 |
+| **周视图 = 时间轴** | 只画设置里选定的时段（默认 **06:00–22:00**，可在设置里改），等比压进一屏、不滚动；每条待办是一个**高度即时长的实心圆角色块**（不再是一小时一个方块）；时间重叠的自动**平分列宽、左右错开**；颜色与日视图同一套（未来蓝 / 即将琥珀 / 进行中绿 / 已过去灰 / 已完成浅灰）；今天那一列有一条「现在」红线 |
 | 冲突提示 | 时间段与已有待办重叠时**仍然创建成功**，但明确告知是哪几条 |
 | 删除确认 | 删除前二次确认（可在设置里关闭） |
-| 设置 | 独立界面（非弹窗）：默认提醒方式、**通知提示音开关**、精确闹钟权限状态、删除确认、冲突提示、默认提前量、**关于 / 隐私 / 版本号** |
+| 设置 | 独立界面（非弹窗）：默认提醒方式、**通知提示音开关**、**周视图显示时段**、精确闹钟权限状态、删除确认、冲突提示、默认提前量、**关于 / 隐私 / 版本号** |
 | 关于与隐私 | 「关于待办提醒」讲清三层提醒通道与两种提醒方式；「隐私」逐条说明数据存在哪、不做什么、每个权限用在哪；「版本号」展示版本/包名/构建类型/数据库版本/设备 API |
 | 整屏表单 | 字段较多，用整屏页面而非对话框承载；按「名称 / 重复 / 时间 / 提醒」分卡，重复选择紧跟名称 |
 | 提醒通知可就地操作 | 通知上直接「完成」或「10 分钟后再提醒」，不必打开 App（后台拉不起界面时这尤其关键） |
@@ -29,6 +33,7 @@ Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止�
 并在界面顶部横幅 + Snackbar 告知用户；**「到点不响」时第一个该看的就是「提醒可靠性检查」页**。
 
 > 真机提醒为什么可能不响（重要）：见 [§5 提醒的可靠性](#5-提醒的可靠性为什么到点不响)。
+> 正式发布前还差哪些事：见 [§10 发布清单](#10-发布清单v100-还差什么)。
 
 ---
 
@@ -129,7 +134,18 @@ cd D:\Download\Todolist
 .\gradlew.bat assembleDebug              # 产出 app\build\outputs\apk\debug\app-debug.apk
 .\gradlew.bat testDebugUnitTest          # 单元测试（纯 JVM + Robolectric）
 .\gradlew.bat connectedDebugAndroidTest  # 仪器化 UI 测试（需要模拟器/真机）
+
+# 发布包：R8 + 资源压缩 + release 签名（约 1.4 MB，debug 包约 17 MB）
+.\gradlew.bat assembleRelease            # 产出 app\build\outputs\apk\release\app-release.apk
+.\gradlew.bat bundleRelease              # 上架用 AAB
+
+# 发布前建议在有网环境跑一次完整检查（本机离线缓存里没有 lint-gradle，见 §7）
+.\gradlew.bat :app:lint
 ```
+
+> release 签名从 `release/keystore.properties` 读取；该目录**不进版本库**。
+> 文件不存在时 `assembleRelease` 会退回 debug 签名照常构建（便于别人 clone 后编译），
+> 只是产物不能上架。签名材料与口令的备份方式见 [§10 发布清单](#10-发布清单v100-还差什么)。
 
 ### 3.3 从零复现环境
 
@@ -162,7 +178,8 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 | `ui/DraftFormStateHolderTest` | 默认时间取整点、编辑回填、四类校验错误、**提前量为 0 时输入框为空且可删空**、超范围输入标记非法、记住上次提前量 |
 | `ui/TodoViewModelTest` | 表单开合、非法表单不落库、落库并排定、降级提示、编辑不新增、切换完成、**删除需确认**、权限变化提示、**只改本次中途返回不多出待办**、**日历跳转请求只发一次**、**提醒开关刷新与检查页开合** |
 | `ui/CalendarPagingTest` | 页↔日期互逆、同页等价（同一周/同一月任意一天）、页号 +1 恰好前进一期、跨年跨月、**页码预算覆盖今天前后 50 年且越界会断言** |
-| `ui/WeekLayoutTest` | 周视图时间轴排版：不重叠各占整列宽、**完全/部分/链式重叠分成泳道**、首尾相接不算重叠、隔开的簇各算各的、跨午夜裁剪到 0~24、零时长与结束早于开始被丢弃、结果按开始时间升序 |
+| `ui/WeekLayoutTest` | 周视图时间轴排版：不重叠各占整列宽、**完全/部分/链式重叠分成泳道**、首尾相接不算重叠、隔开的簇各算各的、跨午夜裁剪、**可见窗口裁剪与「窗口外的条目不参与分簇」**、零时长与结束早于开始被丢弃、结果按开始时间升序 |
+| `domain/WeekWindowTest` | 周视图时段：默认值、合法值原样返回、**起始/结束互相夹取（永远至少 2 小时）**、越界与负数兜底、候选范围选不出非法组合、刻度步长随窗口宽度自动稀疏且数量受控 |
 | `ui/CompactCalendarPagingTest` | 日期对话框翻月：页↔月互逆、相邻月差一页、**固定 42 格（6 行 × 7 列）**、首日周一末日周日、闰年二月也补齐 |
 | `notify/NotificationHelperTest` | 渠道创建与重要性、幂等、通知 id 映射、通知内容、点击跳转、**有声/静音两个渠道按设置二选一且开关运行时生效**、**升级时清掉旧渠道**、取消、权限识别 |
 | `notify/AlarmRingServiceTest` | 响铃服务生命周期：启动即响、**页面解绑后停铃**、**宽限期内重新绑定则继续响**、销毁即停、立刻静音入口、重复投递不会留下第二条无人持有的铃声 |
@@ -170,11 +187,13 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 ### 4.2 仪器化测试（API 35 模拟器）
 
 `TodoListUiTest` 覆盖：标题/倒计时/设置入口、新增待办、名称校验拦截、勾选完成后状态、
-**选择闹钟式后徽章更新**、**未来时段不出现勾选框**、**删除先弹确认框（取消/确认两条路径）**、
-底部四个视图切换、设置页开合、**关于页/隐私页进出**、**版本号一行与详情弹窗**、
-**通知提示音开关落进设置**、**日期对话框左右滑动翻月**、
-**周视图把待办画成按时间的圆角色块**、**重叠的两条并排错开**，以及日历相关的三条回归：
-**打开日视图就停在今天**、**翻页按钮依次前进且来回对称**、**从月视图切回日视图仍停在今天**。
+**默认提醒方式是通知且切到闹钟式后预览随之更新**、**未来时段不出现勾选框**、
+**删除先弹确认框（取消/确认两条路径）**、底部四个视图切换、设置页开合、
+**关于页/隐私页进出**、**版本号一行与详情弹窗**、**通知提示音开关落进设置**、
+**周视图时段设置（改起始时间、恢复默认）**、**周视图只画窗口内的时段**、
+**日期对话框左右滑动翻月**、**周视图把待办画成按时间的圆角色块**、**重叠的两条并排错开**，
+以及日历相关的三条回归：**打开日视图就停在今天**、**翻页按钮依次前进且来回对称**、
+**从月视图切回日视图仍停在今天**。
 
 要点：
 * 通知权限用 `GrantPermissionRule` 预先授予，否则系统权限对话框会盖住界面，
@@ -185,12 +204,16 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 * 造数据尽量不走界面：涉及「今天某个固定时刻」的用例直接调
   `SchedulingCoordinator.create`，避免「默认起始时间是下一个整点」在深夜跑用例时
   悄悄跨到明天（这个坑真实发生过，见 `setStartToYesterday` 的注释）。
+* **点在表单靠下位置的控件前必须先 `performScrollTo()`**：`performClick` 是按节点的
+  root 坐标点下去的，节点在屏幕外时点击不会生效。有一条用例正因为默认提醒方式从
+  「闹钟式」改成「通知」才暴露出来——它以前「通过」只是因为预览文案本来就是闹钟式，
+  点没点上根本不影响断言。
 
 ### 4.3 系统行为验证（adb）
 
 ```powershell
 $adb='D:\Android\sdk\platform-tools\adb.exe'
-$pkg='com.example.todolist'
+$pkg='com.avalonyin1120.todolist'
 
 & $adb install -r app\build\outputs\apk\debug\app-debug.apk
 & $adb shell cmd appops set $pkg SCHEDULE_EXACT_ALARM allow
@@ -200,9 +223,9 @@ $pkg='com.example.todolist'
 & $adb shell dumpsys jobscheduler | Select-String $pkg   # 通知方式的 WorkManager 作业
 
 # 手动触发一次提醒：注意 extra 是 long，必须用 -el
-& $adb shell am broadcast -a com.example.todolist.action.FIRE_REMINDER `
+& $adb shell am broadcast -a com.avalonyin1120.todolist.action.FIRE_REMINDER `
     --el extra_todo_id 1 --el extra_occurrence_start <场次开始毫秒> `
-    -n $pkg/com.example.todolist.reminder.ReminderAlarmReceiver
+    -n $pkg/com.avalonyin1120.todolist.reminder.ReminderAlarmReceiver
 
 & $adb logcat -s TodoReminder      # 应用侧提醒日志
 & $adb reboot                      # 验证重启后自动重排
@@ -261,16 +284,21 @@ $pkg='com.example.todolist'
 
 | 关注点 | 做法 |
 |---|---|
-| 全天可见 | `BoxWithConstraints` 量出可用高度，`hourHeight = 可用高度 / 24`，24 小时等比压进一屏，**不滚动** |
+| 只画有用的时段 | 纵向只画设置里选定的窗口（默认 **06:00–22:00**，设置 → 周视图显示时段 可改，两端至少间隔 2 小时）。凌晨那一截极少有人排待办，把它算进去等于让每个小时矮掉四分之一 |
+| 一屏看完 | `BoxWithConstraints` 量出可用高度，`hourHeight = 可用高度 / 窗口小时数`，窗口内等比压进一屏，**不滚动** |
 | 高度即时长 | 色块高度 = `hourHeight × 时长`；短到看不见的给 12dp 下限（15 分钟在压缩后只有几 dp） |
+| 刻度骑在整点线上 | 刻度文字放在固定高度的容器里再上移半行高。早先只按整点设 `offset`，文字的上边缘压在线上，视觉上比它标注的时刻低约 7dp，而色块是精确对齐整点线的，两相对照就会觉得「色块偏了」 |
 | 重叠错开 | `WeekLayout.blocksOf` 先划分**重叠簇**，再在簇内**贪心分泳道**；同一簇的色块各占 `1/泳道数` 列宽并左右偏移，因此「两个重叠的待办」变成各半宽、并排显示 |
+| 左右留缝对称 | 宽度减 `2×1dp` 的同时**也平移 1dp**。早先只减宽度不平移，色块紧贴列分隔线、右边却空着，整列看上去整体偏左 |
 | 一矩形 = 一条待办 | 不再把同一时段的忙碌合并成一个色块，也不再画逐格底格 |
 | 状态配色 | 直接用日视图那套 `TodoColors.paletteOf(...).accent`：未来蓝 / 即将琥珀 / 进行中绿 / 已过去灰 / 已完成浅灰 |
-| 今天 | 表头日号用主色加粗，该列额外画一条「现在」红线 |
-| 跨午夜 | `WeekLayout` 会把「前几天开始、还没结束」的待办也捞进来并裁剪到 0~24。`CalendarLayout.todosOn` 是按**开始日期**归类的，只看当天的话「前一天 23:00 → 今天 01:00」在第二天的列上会整条消失 |
+| 今天 | 表头日号用主色加粗，该列额外画一条「现在」红线（当前时刻落在窗口外时不画） |
+| 跨午夜 | `WeekLayout` 会把「前几天开始、还没结束」的待办也捞进来并裁剪到窗口。`CalendarLayout.todosOn` 是按**开始日期**归类的，只看当天的话「前一天 23:00 → 今天 01:00」在第二天的列上会整条消失 |
+| 裁剪顺序 | 先按窗口裁、再分簇。反过来的话，「凌晨 5 点那条」（根本看不见）会把清晨的簇撑成两条泳道，让看得见的那条白白变成半宽 |
 
-`WeekLayout` 是纯 Kotlin（不引用任何 Android/Compose 类型），所以泳道划分这类
-「画在屏幕上很难断言」的逻辑由 `ui/WeekLayoutTest` 的 14 个用例钉住。
+`WeekLayout` 与 `WeekWindow` 都是纯 Kotlin（不引用任何 Android/Compose 类型），
+所以泳道划分、窗口夹取这类「画在屏幕上很难断言」的逻辑由 `ui/WeekLayoutTest`
+与 `domain/WeekWindowTest` 钉住。
 
 验证：`TodoListUiTest` 的「周视图把待办画成按时间的圆角色块」「重叠的两条待办会并排错开而不是叠在一起」，
 以及真机截图 `验证截图/27-周视图时间轴.png`。
@@ -303,21 +331,21 @@ $pkg='com.example.todolist'
 
 ```powershell
 $adb='D:\Android\sdk\platform-tools\adb.exe'
-& $adb shell appops set com.example.todolist SCHEDULE_EXACT_ALARM allow
+& $adb shell appops set com.avalonyin1120.todolist SCHEDULE_EXACT_ALARM allow
 & $adb logcat -c
 # 造一条 12 秒后触发的闹钟式提醒
-& $adb shell am broadcast -a com.example.todolist.debug.SEED_TODO `
-    -n com.example.todolist/com.example.todolist.debug.DebugSeedReceiver `
+& $adb shell am broadcast -a com.avalonyin1120.todolist.debug.SEED_TODO `
+    -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.debug.DebugSeedReceiver `
     -e name 闹钟关闭验证 --el trigger_in_seconds 12 --ez alarm true
 # 等响铃页弹出来之后（不要点任何按钮）按返回键
 & $adb shell input keyevent 4
 & $adb logcat -d -s TodoAlarm
 # 期望看到：闹钟开始响铃 → 闹钟页已关闭，停止响铃并退出服务 → 闹钟停止响铃
-& $adb shell dumpsys activity services com.example.todolist   # 不应再有 AlarmRingService
+& $adb shell dumpsys activity services com.avalonyin1120.todolist   # 不应再有 AlarmRingService
 ```
 
 实测（API 35 模拟器）：绑定关系在 `dumpsys activity services` 里能看到
-`ConnectionRecord ... CR com.example.todolist/.notify.AlarmRingService`；
+`ConnectionRecord ... CR com.avalonyin1120.todolist/.notify.AlarmRingService`；
 按返回键后日志顺序为「闹钟页已关闭，停止响铃并退出服务」→「闹钟停止响铃」，
 服务记录消失。
 
@@ -352,13 +380,13 @@ App 侧做了「主通道 + 保险通道」，并在界面里提供「提醒可�
 ### 5.3 一次提醒的完整链路（真机验证步骤）
 
 ```powershell
-$adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
+$adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
 & $adb shell pm grant $pkg android.permission.POST_NOTIFICATIONS
 & $adb shell cmd appops set $pkg SCHEDULE_EXACT_ALARM allow
 
 # debug 专用：造一条「40 秒后提醒」的待办（走真实的 create + 调度链路）
-& $adb shell am broadcast -a com.example.todolist.debug.SEED_TODO `
-    -n "$pkg/com.example.todolist.debug.DebugSeedReceiver" `
+& $adb shell am broadcast -a com.avalonyin1120.todolist.debug.SEED_TODO `
+    -n "$pkg/com.avalonyin1120.todolist.debug.DebugSeedReceiver" `
     -e name 后台验证 --el trigger_in_seconds 40 --ez alarm true
 
 & $adb shell dumpsys alarm | Select-String $pkg   # 应看到两条：主通道 + 3 分钟后的保险
@@ -396,18 +424,22 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
   这是系统行为而非代码缺陷；需要准时请选闹钟式。
 - **闹钟式需要精确闹钟权限**（Android 12+ 默认关闭），设置页与顶部横幅都提供入口。
 - **全屏 Intent 的显示受系统策略约束**：部分厂商 ROM 需要额外允许「后台弹出界面」。
-- **数据库当前 v5，全部使用 `fallbackToDestructiveMigration`**：仍在测试阶段、每次都允许清库，
-  正式发布前必须替换为真正的 `Migration`（已导出 schema，可用于比对），
-  并把 `versionCode` / `versionName` / 包名（现在是 `com.example.todolist`）一起改掉。
-  当前 `versionCode = 16`、`versionName = "0.16.0"`，是「第 16 次测试构建」的记法，
-  发版时改成 1.0.0 之类的正式语义即可（设置 → 版本号 里显示的就是这两个值，不用改代码）。
+- **数据库当前 v5，已移除 `fallbackToDestructiveMigration`**：从 1.0.0 起用户数据就是真实资产，
+  **任何 schema 变更都必须配一条 `Migration`**（忘写会在升级时直接抛异常，开发期立刻暴露，
+  而不是悄悄清空用户数据）。本版本把包名从 `com.example.todolist` 改成了
+  `com.avalonyin1120.todolist`，对所有人都是全新安装，因此现在不需要迁移历史库。
+  加迁移的步骤写在 `TodoDatabase.MIGRATIONS` 的注释里。
+- **默认提醒方式是「通知」**：想默认响铃就在设置里打开「默认使用闹钟式提醒」。
 - **通知提示音是「响一下」，闹钟式是「一直响到处理」**：两者互不影响，
   关闭「通知提示音」不会让闹钟式提醒变安静。
 - **通知渠道创建后声音不可更改**，所以「有声 / 静音」是两个固定渠道按设置二选一；
   升级安装时会主动删掉旧版本留下的渠道（`todo_reminder`），避免系统设置里堆同名项。
 - 设置中的「默认使用闹钟式」会影响新建待办的默认选项，不改变已有待办。
-- **周视图把 24 小时压进一屏**，因此极短的待办（十几分钟）会贴着 12dp 的高度下限；
-  想知道精确时刻请点该列进日视图，或看色块内的名称。
+- **周视图只画设置里选定的时段**（默认 06:00–22:00）：窗口外的部分被裁掉，
+  整条都在窗口外的待办不画。想看被裁掉的细节，把窗口拉宽或点该列进日视图。
+- **周视图把窗口压进一屏**，因此极短的待办（十几分钟）会贴着 12dp 的高度下限。
+- **列表底部预留了 96dp**：最后一个待办不会被贴死在屏幕底边，也不会被从底部弹出的
+  Snackbar（保存成功、时间段冲突提示）挡住。
 - 设置页/关于页/隐私页的滚动位置会保留（`rememberSaveableStateHolder`），
   从「关于」返回不会跳回顶部。
 
@@ -427,6 +459,15 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
    权限申请改到 `setContent` 之后的 `LaunchedEffect`。
 6. **Robolectric 测试很慢**（本机单次全量约 20 分钟以上），
    调试单个用例时用 `--tests "*ClassName*"` 只跑关心的类。
+7. **`lint-gradle` 拉不到，`assembleRelease` 会被 `lintVitalAnalyzeRelease` 卡住**：
+   `com.android.tools.lint:lint-gradle:31.9.2` 不在离线缓存里，Google Maven 也拉不动
+   （在线解析长时间无响应），于是 release 构建直接失败。已在 `app/build.gradle.kts` 里
+   `lint { checkReleaseBuilds = false }` 关掉构建期检查，发布前请在有网环境手动跑
+   `.\gradlew :app:lint`。
+8. **改包名比想象中碎**：`namespace` / `applicationId`、四个源码集的目录、
+   `app/schemas/<包名>.data.local.TodoDatabase/` 的目录名、以及所有 `import` 与
+   文档里的 adb 命令都要一起改。Kotlin 不强制目录与包名一致，所以漏搬目录**不会**
+   编译报错，只会让源码树变得莫名其妙——改完请 `Get-ChildItem -Recurse -Directory` 核一遍。
 
 ---
 
@@ -450,8 +491,9 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
 |---|---|---|
 | 模拟器冷启动 | 约 60s+ | **约 20s** |
 | 应用冷启动（`am start -W` TotalTime） | — | **2.27s** |
-| 一次完整 instrumented 测试（构建+安装+28 个用例） | 2–3 分钟 | **约 45–60s** |
-| 完整单测（224 用例 / 14 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
+| 一次完整 instrumented 测试（构建+安装+30 个用例） | 2–3 分钟 | **约 45–60s** |
+| 完整单测（244 用例 / 15 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
+| release APK 体积（R8 + 资源压缩） | — | **1.4 MB**（debug 包 17.1 MB） |
 
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
 以及把 ViewModel 里常驻的每秒 `while(true)` 轮询改成按需冷流
@@ -473,8 +515,8 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.example.todolist'
 ```powershell
 # 把切换动画放慢到 2.5 秒，便于观测
 adb shell setprop debug.todo.anim_ms 2500
-adb shell am force-stop com.example.todolist
-adb shell am start -n com.example.todolist/.MainActivity
+adb shell am force-stop com.avalonyin1120.todolist
+adb shell am start -n com.avalonyin1120.todolist/.MainActivity
 
 # 跑验证脚本：连拍截图并对比帧间差异
 python tools\verify_swipe_animation.py
@@ -493,3 +535,38 @@ adb shell setprop debug.todo.anim_ms 0
 | 日→周（系统动画缩放=0） | 平均差 5.2 | 平均差 0.1 | 第一帧就已是切换后状态，符合预期 |
 
 发布构建里 `TodoRouteAnim.durationMs` 恒定返回 280，系统属性完全不参与。
+
+---
+
+## 10. 发布清单（v1.0.0 还差什么）
+
+本版本（v17）已经把下面这些做完了：
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 包名 | ✅ | `com.avalonyin1120.todolist`（原 `com.example.todolist`）。对 Play 而言是**全新应用**，旧测试包仍留在测试机上，建议卸载 |
+| 版本号 | ✅ | `versionCode = 1`、`versionName = "1.0.0-rc1"`（`app/build.gradle.kts`）；设置 → 版本号 里显示的就是这两个值 |
+| release 签名 | ✅ | `release/keystore.properties` + `release/todolist-release.jks`（**均不进版本库**）。keystore 口令在 properties 里，请连同 jks 一起备份——丢了就再也无法给同一个应用发包 |
+| R8 + 资源压缩 | ✅ | release 包 1.4 MB（debug 17.1 MB）；`app/proguard-rules.pro` 里逐条写清了为什么需要那条规则 |
+| 数据库迁移策略 | ✅ | 去掉 `fallbackToDestructiveMigration`，改成显式的 `MIGRATIONS` 数组（当前为空，因为包名变更 = 全新安装） |
+| debug 专用组件不导出 | ✅ | `DebugAlarmReceiver` / `DebugSeedReceiver` 只存在于 `src/debug/AndroidManifest.xml`，release 清单里根本没有它们；`ReminderAlarmReceiver`、`ReminderActionReceiver`、`AlarmRingService`、`AlarmActivity` 均为 `exported="false"`。已用 `aapt2 dump xmltree --file AndroidManifest.xml app-release.apk` 逐条核对 |
+
+> 顺带复核了「隐私」页的说法：release 包的权限清单里**确实没有 `INTERNET`**，
+> 只有 `ACCESS_NETWORK_STATE`（WorkManager 自己声明的，不授予联网能力），
+> 所以「没有把数据发出去的能力」这句话是站得住的。
+| `USE_EXACT_ALARM` | ✅ 已决定**不声明** | 它会自动获得精确闹钟权限，但 Google Play 只允许「闹钟/日历」类应用声明，上架有被驳回风险；现在靠「检查页 + 横幅」引导用户手动授权 |
+| release 包实测 | ✅ | 装到 API 35 模拟器上：能启动、能新增待办、**提醒确实排进了 AlarmManager**（混淆没有破坏 Room / WorkManager / 闹钟链路）、版本页显示 `1.0.0-rc1（1）· 正式构建` |
+
+发布时还要做的：
+
+1. ⬜ `versionName` 从 `1.0.0-rc1` 改成 `1.0.0`；**之后每次发版把 `versionCode` 加一**
+   （Play 不接受相同或更小的 versionCode）。
+2. ⬜ 在有网环境跑 `.\gradlew :app:lint` 看完整检查报告（本机离线缓存缺 `lint-gradle`，
+   构建期检查已关，见 §7.7）。
+3. ⬜ 生成上架产物：`.\gradlew bundleRelease` → `app/build/outputs/bundle/release/app-release.aab`。
+4. ⬜ 商店素材：图标（现在还是默认启动图标）、截图、隐私政策链接
+   （「设置 → 隐私」那一页的内容可以直接整理成政策文本）。
+5. ⬜ 真机回归：至少在一台 ColorOS / 一台类原生上验证「后台 + 熄屏 + 杀进程」三场景，
+   以及 §5.4 列出的那几个必须由用户手动打开的开关。
+6. ⬜ 确认 `release/` 目录已备份（keystore + properties）。**这一步没做就不要发包**：
+   Play 不接受更换签名的更新，丢了只能换包名重新上架。

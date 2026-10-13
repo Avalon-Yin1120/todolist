@@ -1,0 +1,300 @@
+package com.avalonyin1120.todolist.reminder
+
+import com.avalonyin1120.todolist.data.TodoRepository
+import com.avalonyin1120.todolist.data.TodoDraft
+import com.avalonyin1120.todolist.data.toTodo
+import com.avalonyin1120.todolist.domain.Clock
+import com.avalonyin1120.todolist.domain.RecurrenceException
+import com.avalonyin1120.todolist.domain.RecurrenceExceptionKind
+import com.avalonyin1120.todolist.domain.RecurrenceExpander
+import com.avalonyin1120.todolist.domain.ReminderStrategy
+import com.avalonyin1120.todolist.domain.Todo
+import com.avalonyin1120.todolist.domain.toReminderPlanFor
+import com.avalonyin1120.todolist.sys.ExactAlarmPermission
+import java.time.ZoneId
+
+/**
+ * 调度编排：把「仓库里的数据」与「系统的调度能力」接起来。
+ *
+ * 所有会改变提醒语义的操作都从这里走，于是「取消旧调度 / 排定新调度 / 开机重排」
+ * 三件事只有一处实现，测试也只需要盯住这一处。
+ *
+ * @param zone 用于把周期规则展开成具体场次；注入是为了让测试固定时区。
+ */
+class SchedulingCoordinator(
+    private val repository: TodoRepository,
+    /** 精确闹钟通道：闹钟式提醒的主通道（`setAlarmClock`）。 */
+    val exactScheduler: ReminderScheduler,
+    /**
+     * 非精确闹钟通道（`setAndAllowWhileIdle`，不需要任何权限）：
+     * 通知方式的主通道，同时充当精确通道的「保险」。
+     */
+    private val inexactScheduler: ReminderScheduler,
+    /**
+     * WorkManager 通道：只作为最后一道保险。
+     *
+     * 它在国产 ROM 上最不可靠（JobScheduler 会被整体推迟到用户下次打开 App），
+     * 正因为如此才需要前面那两条 AlarmManager 通道；留着它是为了「万一闹钟也被冻结」。
+     */
+    private val workScheduler: ReminderScheduler,
+    private val clock: Clock,
+    private val exactAlarmPermission: ExactAlarmPermission,
+    private val zone: ZoneId = ZoneId.systemDefault(),
+) {
+
+    /** 本次排定是否因缺少精确闹钟权限而降级为普通通知。 */
+    var lastScheduleWasDegraded: Boolean = false
+        private set
+
+    suspend fun findById(id: Long): Todo? = repository.findById(id)
+
+    /** 写入结果。 */
+    data class WriteResult(
+        val todoId: Long,
+        /** 与本次时间段重叠的其它待办：按需求仍然创建成功，只是需要提示用户。 */
+        val overlapping: List<Todo>,
+        val degraded: Boolean,
+    )
+
+    // ------------------------------------------------------------------ 写操作
+
+    /** 新增待办并排定提醒。 */
+    suspend fun create(draft: TodoDraft): WriteResult {
+        val todo = draft.toTodo(existing = null, now = clock.now())
+        val overlapping = detectOverlap(todo, excludeId = 0L)
+        val id = repository.insert(todo)
+        val created = repository.findById(id) ?: todo.copy(id = id)
+        scheduleFor(created)
+        return WriteResult(id, overlapping, lastScheduleWasDegraded)
+    }
+
+    /** 更新待办：先撤掉旧调度，再按新值重排。 */
+    suspend fun update(draft: TodoDraft): WriteResult? {
+        val existing = repository.findById(draft.id) ?: return null
+        val updated = draft.toTodo(existing = existing, now = clock.now())
+        return updateTodo(updated)
+    }
+
+    /** 直接更新一条已构造好的待办（供「仅修改本次」等流程使用）。 */
+    suspend fun updateTodo(todo: Todo): WriteResult? {
+        if (repository.findById(todo.id) == null) return null
+        val updated = todo.copy(updatedAt = clock.now())
+        val overlapping = detectOverlap(updated, excludeId = updated.id)
+
+        cancelSchedules(updated.id)
+        repository.update(updated)
+        val fresh = repository.findById(updated.id) ?: return null
+        scheduleFor(fresh)
+        return WriteResult(fresh.id, overlapping, lastScheduleWasDegraded)
+    }
+
+    /** 删除待办：连同调度、派生场次与已发出的通知一起清掉。 */
+    suspend fun delete(todoId: Long) {
+        val todo = repository.findById(todoId) ?: return
+        cancelSchedules(todoId)
+        // 「仅修改本次」生成的独立待办属于这条规则，一并清理
+        repository.findChildren(todoId).forEach { child ->
+            cancelSchedules(child.id)
+            repository.delete(child)
+        }
+        repository.delete(todo)
+    }
+
+    /**
+     * 只跳过重复规则的某一场：在该日期上记一条 SKIPPED 例外。
+     *
+     * 这样「删除本次」不影响其它场次，也不必为每个场次建数据库行。
+     */
+    suspend fun skipOccurrence(todoId: Long, occurrenceStart: Long) {
+        val todo = repository.findById(todoId) ?: return
+        val dateKey = RecurrenceExpander.dateKeyOf(occurrenceStart, zone)
+        if (todo.recurrenceExceptions.any { it.date == dateKey }) return
+        val updated = todo.copy(
+            recurrenceExceptions = todo.recurrenceExceptions +
+                RecurrenceException(dateKey, RecurrenceExceptionKind.SKIPPED),
+            updatedAt = clock.now(),
+        )
+        cancelSchedules(todoId)
+        repository.update(updated)
+        val fresh = repository.findById(todoId) ?: return
+        scheduleFor(fresh)
+    }
+
+    /** 切换完成状态；标记完成时撤销未触发的提醒，取消完成时按需重排。 */
+    suspend fun setDone(todoId: Long, done: Boolean) {
+        val todo = repository.findById(todoId) ?: return
+        val updated = todo.copy(isDone = done, updatedAt = clock.now())
+        cancelSchedules(todoId)
+        repository.update(updated)
+        if (!done) {
+            scheduleFor(updated)
+        }
+    }
+
+    /**
+     * 全量对账：把还需要提醒的事项重新排一遍。
+     * 触发时机：App 启动、开机完成、系统时间/时区变更。
+     */
+    suspend fun reconcileAll(): Int {
+        var scheduled = 0
+        repository.findAll().forEach { todo ->
+            if (scheduleFor(todo)) scheduled++
+        }
+        return scheduled
+    }
+
+    // ------------------------------------------------------------------ 查询
+
+    /** 与给定时间段重叠的未完成待办（用于创建前的提示）。 */
+    suspend fun findOverlapping(startAt: Long, endAt: Long, excludeId: Long = 0L): List<Todo> =
+        repository.findOverlapping(startAt, endAt, excludeId)
+
+    private suspend fun detectOverlap(todo: Todo, excludeId: Long): List<Todo> =
+        repository.findOverlapping(todo.startAt, todo.endAt, excludeId)
+
+    // ------------------------------------------------------------------ 调度
+
+    /**
+     * 计算该提醒哪一场并排进对应调度器；返回是否真的排定了。
+     *
+     * 跳过的情况：已完成；找不到未来的场次；这一场已经提醒过。
+     *
+     * 排定策略是「主通道 + 保险通道」：
+     * * 闹钟式 → 精确闹钟（`setAlarmClock`）+ 非精确闹钟（晚 [BACKSTOP_DELAY_MS]）
+     * * 通知式 → 非精确闹钟（准时）+ WorkManager（晚 [BACKSTOP_DELAY_MS]）
+     *
+     * 多排一条不会导致重复提醒：[ReminderFiringService] 会用「这一场是否已经提醒过」挡掉。
+     * 这一步是为真机（尤其 ColorOS / MIUI 这类省电激进的 ROM）准备的——
+     * 单通道一旦被冻结，用户就是「到点了什么都没发生」。
+     */
+    private suspend fun scheduleFor(todo: Todo): Boolean {
+        val now = clock.now()
+        val occurrence = nextOccurrenceToRemind(todo, now) ?: return false
+
+        lastScheduleWasDegraded = false
+        val plan = todo.toReminderPlanFor(occurrence)
+        val effective = if (plan.strategy == ReminderStrategy.EXACT_ALARM &&
+            !exactAlarmPermission.canScheduleExactAlarms()
+        ) {
+            lastScheduleWasDegraded = true
+            plan.copy(strategy = ReminderStrategy.NOTIFICATION)
+        } else {
+            plan
+        }
+        schedulerFor(effective.strategy).schedule(effective)
+
+        val backstop = effective.copy(
+            strategy = if (effective.strategy == ReminderStrategy.EXACT_ALARM) {
+                ReminderStrategy.NOTIFICATION
+            } else {
+                ReminderStrategy.WORK_FALLBACK
+            },
+            triggerAt = effective.triggerAt + BACKSTOP_DELAY_MS,
+        )
+        schedulerFor(backstop.strategy).schedule(backstop)
+        return true
+    }
+
+    /**
+     * 下一次需要提醒的场次开始时间；不需要提醒时返回 null。
+     *
+     * 允许「迟到」[MISSED_GRACE_MS]：提醒时刻刚过去不久（例如系统深度休眠、
+     * 或被厂商省电策略冻结而没投递）时仍然返回这一场，系统会立刻补投一次。
+     * 超过宽限期就不再补发，避免装上新版本后被历史事项刷屏。
+     */
+    suspend fun nextOccurrenceToRemind(todo: Todo, now: Long): Long? {
+        if (todo.isDone) return null
+        val graceStart = now - MISSED_GRACE_MS
+
+        if (!todo.recurrence.isRecurring) {
+            // 一次性待办：已提醒过就不再提醒
+            if (todo.remindedOccurrenceStart == todo.startAt) return null
+            val triggerAt = todo.startAt - todo.leadMinutes * MILLIS_PER_MINUTE
+            return todo.startAt.takeIf { triggerAt > graceStart }
+        }
+
+        // 周期待办：逐场向前找第一个「还没提醒过且提醒时刻仍在（宽限期内）未来」的场次
+        var searchAfter = graceStart
+        repeat(MAX_OCCURRENCE_LOOKAHEAD) {
+            val occurrence = RecurrenceExpander.nextOccurrenceAfter(todo, searchAfter, zone)
+                ?: return null
+            val triggerAt = occurrence - todo.leadMinutes * MILLIS_PER_MINUTE
+            if (todo.remindedOccurrenceStart != occurrence && triggerAt > graceStart) return occurrence
+            searchAfter = occurrence
+        }
+        return null
+    }
+
+    /** 供触发后重排使用：把指定场次标记为已提醒并排定下一场。 */
+    suspend fun markRemindedAndReschedule(todoId: Long, occurrenceStart: Long) {
+        val todo = repository.findById(todoId) ?: return
+        if (todo.remindedOccurrenceStart == occurrenceStart) return
+        repository.markReminded(todoId, occurrenceStart)
+        cancelSchedules(todoId)
+        val fresh = repository.findById(todoId) ?: return
+        scheduleFor(fresh)
+    }
+
+    private fun cancelSchedules(todoId: Long) {
+        exactScheduler.cancel(todoId)
+        inexactScheduler.cancel(todoId)
+        workScheduler.cancel(todoId)
+    }
+
+    private fun schedulerFor(strategy: ReminderStrategy): ReminderScheduler = when (strategy) {
+        ReminderStrategy.EXACT_ALARM -> exactScheduler
+        ReminderStrategy.NOTIFICATION -> inexactScheduler
+        ReminderStrategy.WORK_FALLBACK -> workScheduler
+    }
+
+    private companion object {
+        const val MILLIS_PER_MINUTE = 60_000L
+
+        /** 保险通道比主通道晚多久；太短会浪费电，太长则用户已经错过。 */
+        const val BACKSTOP_DELAY_MS = 3 * MILLIS_PER_MINUTE
+
+        /**
+         * 「迟到」宽限期：提醒时刻已过但在该窗口内时仍然补投一次。
+         *
+         * 取值权衡：太短则系统深休眠/被杀进程导致的漏提醒无法补救；
+         * 太长则用户打开 App 会被很久以前的提醒打扰。
+         */
+        const val MISSED_GRACE_MS = 15 * MILLIS_PER_MINUTE
+
+        /** 周期规则向前搜索的最大场次数，避免异常数据导致死循环。 */
+        const val MAX_OCCURRENCE_LOOKAHEAD = 400
+    }
+}
+
+/**
+ * 提醒真正轮到触发时的处理器，由 Alarm Receiver 与 Worker 共用。
+ */
+fun interface ReminderFireHandler {
+    /**
+     * @param todoId 待办 id
+     * @param occurrenceStart 本次触发的场次开始时间（周期待办靠它区分是哪一场）
+     */
+    suspend fun fire(todoId: Long, occurrenceStart: Long)
+}
+
+/**
+ * 触发后的落地处理：交给外部回调（发通知或拉起闹钟页），
+ * 然后记录「哪一场已提醒」并为下一场重排。
+ *
+ * 对周期待办，重排这一步是必需的，否则周期提醒只会响第一次。
+ */
+class ReminderFiringService(
+    private val coordinator: SchedulingCoordinator,
+    private val onFire: suspend (Todo) -> Unit,
+) : ReminderFireHandler {
+
+    override suspend fun fire(todoId: Long, occurrenceStart: Long) {
+        val todo = coordinator.findById(todoId) ?: return
+        if (todo.isDone) return
+        // 必须先判断「这一场是否已经提醒过」，再去标记与重排。
+        // 若顺序颠倒，第二次触发会先被重新排定，导致同一场次重复提醒。
+        if (todo.remindedOccurrenceStart == occurrenceStart) return
+        onFire(todo)
+        coordinator.markRemindedAndReschedule(todoId, occurrenceStart)
+    }
+}
