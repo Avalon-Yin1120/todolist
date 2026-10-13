@@ -125,9 +125,15 @@ class ReminderTimeTest {
 
     @Test
     fun `策略由提醒方式决定`() {
-        assertThat(TestData.todo(mode = ReminderMode.ALARM).toReminderPlan().strategy)
+        // 三档都要在这条用例里出现：映射写成 if/else 时编译器不会因为漏了一档而报错，
+        // 只有这里逐个断言才能兜住（NONE 尤其容易漏，它连策略都没有）
+        assertThat(TestData.todo(mode = ReminderMode.ALARM).toReminderPlan()?.strategy)
             .isEqualTo(ReminderStrategy.EXACT_ALARM)
-        assertThat(TestData.todo(mode = ReminderMode.NOTIFICATION).toReminderPlan().strategy)
+        assertThat(TestData.todo(mode = ReminderMode.NOTIFICATION).toReminderPlan()?.strategy)
             .isEqualTo(ReminderStrategy.NOTIFICATION)
+        // 「不通知」不是「换一条通道」，而是压根没有计划：用 null 表达，
+        // 不能给它编一个「排得很远」之类的假策略
+        assertThat(TestData.todo(mode = ReminderMode.NONE).toReminderPlan()).isNull()
+        assertThat(TestData.todo(mode = ReminderMode.NONE).toReminderPlanFor(TestData.NOW)).isNull()
     }
 }

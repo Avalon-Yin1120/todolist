@@ -6,24 +6,33 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import com.avalonyin1120.todolist.domain.ReminderPlan
 
 /**
- * 基于 AlarmManager 的提醒通道。同一条通道有两种强度：
+ * 基于 AlarmManager 的提醒通道。
  *
- * * [exact] = true：闹钟式提醒。优先用 **`setAlarmClock`**——系统把它当作「用户可见的闹钟」，
- *   Doze 下必定唤醒，状态栏还会出现闹钟图标；国产 ROM（ColorOS / MIUI / EMUI）的省电策略
- *   普遍对「闹钟」放行，而普通精确闹钟会被冻结。权限被拒或调用失败时退到
- *   `setExactAndAllowWhileIdle`，再退到 `setAndAllowWhileIdle`。
- * * [exact] = false：通知方式的主通道。用 `setAndAllowWhileIdle`，**不需要任何特殊权限**，
- *   而且比 JobScheduler（WorkManager）可靠得多：JobScheduler 在国产 ROM 上经常被整体推迟到
- *   「用户下次打开 App」，而闹钟即使设备处于 Doze 也会被投递（同一应用约 9 分钟节流一次）。
+ * ## 两种强度，都走精确闹钟
+ *
+ * 应用在清单里声明了 `USE_EXACT_ALARM`（Android 13+），因此绝大多数设备上
+ * 「精确闹钟」是自动授予的；[AlarmStyle] 决定的是**用哪一种精确闹钟**：
+ *
+ * * [AlarmStyle.ALARM_CLOCK]：闹钟式提醒。用 **`setAlarmClock`**——系统把它当作
+ *   「用户可见的闹钟」，Doze 下必定唤醒，状态栏会出现闹钟图标；国产 ROM
+ *   （ColorOS / MIUI / EMUI）的省电策略普遍对「闹钟」放行，而普通精确闹钟会被冻结。
+ * * [AlarmStyle.EXACT]：通知方式的主通道。用 `setExactAndAllowWhileIdle`——精确到点，
+ *   但不占用「闹钟」语义（状态栏不出现闹钟图标，也不会把音量当成闹钟音量）。
+ *
+ * 两条通道都保留「没有精确闹钟权限」时的兜底：退到 `setAndAllowWhileIdle`（不需要任何权限），
+ * 宁可晚一点也不能崩、不能什么都不做。旧版本只有「精确 / 非精确」两档，通知方式走的是非精确通道，
+ * 因此本条改动让通知方式也从「近似」变成了「精确」——这正是用户反馈「杀进程后不响」时
+ * 能做的最实在的一件事（精确闹钟在 Doze / 被冻结后仍会被投递）。
  *
  * 两条通道用不同的 data URI 与 requestCode，互不覆盖、互不取消。
  */
 class AlarmReminderScheduler(
     private val context: Context,
-    private val exact: Boolean = true,
+    private val style: AlarmStyle,
 ) : ReminderScheduler {
 
     private val alarmManager: AlarmManager? =
@@ -32,27 +41,32 @@ class AlarmReminderScheduler(
     override fun schedule(plan: ReminderPlan) {
         val manager = alarmManager ?: return
         val pendingIntent = buildPendingIntent(plan.todoId, plan.occurrenceStart)
+        val canScheduleExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            manager.canScheduleExactAlarms()
+
+        if (!canScheduleExact) {
+            Log.w(TAG, "没有精确闹钟权限，退化为非精确调度：todo=${plan.todoId}")
+            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAt, pendingIntent)
+            return
+        }
         try {
-            when {
-                !exact -> manager.setAndAllowWhileIdle(
+            when (style) {
+                AlarmStyle.ALARM_CLOCK -> manager.setAlarmClock(
+                    AlarmManager.AlarmClockInfo(plan.triggerAt, showIntent(plan.todoId)),
+                    pendingIntent,
+                )
+
+                AlarmStyle.EXACT -> manager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     plan.triggerAt,
                     pendingIntent,
                 )
-
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    !manager.canScheduleExactAlarms() -> {
-                    // 理论到不了这里（协调器已降级），但保留兜底以免抛 SecurityException。
-                    manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAt, pendingIntent)
-                }
-
-                else -> manager.setAlarmClock(
-                    AlarmManager.AlarmClockInfo(plan.triggerAt, showIntent(plan.todoId)),
-                    pendingIntent,
-                )
             }
         } catch (_: SecurityException) {
-            // setAlarmClock / setExactAndAllowWhileIdle 都要求精确闹钟权限，被拒时退到非精确。
+            // setAlarmClock / setExactAndAllowWhileIdle 都要求精确闹钟权限。
+            // 上面的检查与真正调用之间权限可能被收回（例如用户在系统设置里关掉），
+            // 这时退到非精确而不是崩掉或静默失败。
+            Log.w(TAG, "精确调度被拒，退化为非精确调度：todo=${plan.todoId}")
             runCatching {
                 manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAt, pendingIntent)
             }
@@ -69,7 +83,7 @@ class AlarmReminderScheduler(
         val intent = Intent(context, ReminderAlarmReceiver::class.java).apply {
             action = ACTION_FIRE
             // data 唯一化，保证不同待办、不同通道各自得到不同的 PendingIntent。
-            data = Uri.parse("todolist://reminder/${channelName()}/$todoId")
+            data = Uri.parse("todolist://reminder/${channelKey()}/$todoId")
             putExtra(EXTRA_TODO_ID, todoId)
             putExtra(EXTRA_OCCURRENCE_START, occurrenceStart)
         }
@@ -106,15 +120,30 @@ class AlarmReminderScheduler(
         )
     }
 
-    private fun channelName(): String = if (exact) "exact" else "inexact"
+    /**
+     * 通道标识，只用来区分两条通道，**不代表精确与否**。
+     *
+     * 名字沿用早期「按是否精确分成 exact / inexact 两条通道」时的取值：
+     * 改名的代价是升级后**旧版本登记的闹钟再也没人取消**（PendingIntent 靠 data + requestCode
+     * 匹配），会留下幽灵提醒。所以这里宁可让名字与现在的语义不一致，也不动它。
+     */
+    private fun channelKey(): String = when (style) {
+        AlarmStyle.ALARM_CLOCK -> "exact"
+        AlarmStyle.EXACT -> "inexact"
+    }
 
-    /** PendingIntent 的 requestCode：与 [channelName] 一起保证两条通道互不覆盖。 */
+    /** PendingIntent 的 requestCode：与 [channelKey] 一起保证两条通道互不覆盖。 */
     private fun requestCodeOf(todoId: Long): Int {
         val base = baseRequestCodeOf(todoId)
-        return if (exact) base else base xor 0x4000_0000
+        return when (style) {
+            AlarmStyle.ALARM_CLOCK -> base
+            AlarmStyle.EXACT -> base xor 0x4000_0000
+        }
     }
 
     companion object {
+        const val TAG = "TodoReminder"
+
         const val ACTION_FIRE = "com.avalonyin1120.todolist.action.FIRE_REMINDER"
         const val EXTRA_TODO_ID = "extra_todo_id"
         const val EXTRA_OCCURRENCE_START = "extra_occurrence_start"
@@ -122,4 +151,18 @@ class AlarmReminderScheduler(
         /** requestCode 需要是稳定的 int；用 id 低位即可。 */
         fun baseRequestCodeOf(todoId: Long): Int = (todoId xor (todoId ushr 32)).toInt()
     }
+}
+
+/**
+ * 精确闹钟的两种强度。
+ *
+ * 分成两档而不是「精确 / 非精确」两档，是因为精确闹钟权限现在由 `USE_EXACT_ALARM` 自动授予，
+ * 真正的区别变成了「要不要让系统按闹钟对待它」（状态栏图标、音量通道、厂商放行策略）。
+ */
+enum class AlarmStyle {
+    /** 闹钟式：`setAlarmClock`。 */
+    ALARM_CLOCK,
+
+    /** 通知式：`setExactAndAllowWhileIdle`。 */
+    EXACT,
 }

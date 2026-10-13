@@ -7,6 +7,7 @@ import com.avalonyin1120.todolist.domain.Clock
 import com.avalonyin1120.todolist.domain.RecurrenceException
 import com.avalonyin1120.todolist.domain.RecurrenceExceptionKind
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
+import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.ReminderStrategy
 import com.avalonyin1120.todolist.domain.Todo
 import com.avalonyin1120.todolist.domain.toReminderPlanFor
@@ -23,11 +24,15 @@ import java.time.ZoneId
  */
 class SchedulingCoordinator(
     private val repository: TodoRepository,
-    /** 精确闹钟通道：闹钟式提醒的主通道（`setAlarmClock`）。 */
+    /** 闹钟通道：闹钟式提醒的主通道（`setAlarmClock`，系统按「闹钟」对待）。 */
     val exactScheduler: ReminderScheduler,
     /**
-     * 非精确闹钟通道（`setAndAllowWhileIdle`，不需要任何权限）：
-     * 通知方式的主通道，同时充当精确通道的「保险」。
+     * 通知方式的主通道（`setExactAndAllowWhileIdle`，精确到点），
+     * 同时充当闹钟通道的「保险」。
+     *
+     * 参数名从 v19 起刻意保留 `inexactScheduler`：它现在也是精确的（清单声明了
+     * `USE_EXACT_ALARM`），改名会牵动一批测试与调用点的可读性，而它表达的是
+     * 「第二条闹钟通道」，与精确与否无关。真正的选择在 `AlarmReminderScheduler.AlarmStyle`。
      */
     private val inexactScheduler: ReminderScheduler,
     /**
@@ -157,7 +162,7 @@ class SchedulingCoordinator(
     /**
      * 计算该提醒哪一场并排进对应调度器；返回是否真的排定了。
      *
-     * 跳过的情况：已完成；找不到未来的场次；这一场已经提醒过。
+     * 跳过的情况：选了「不通知」；已完成；找不到未来的场次；这一场已经提醒过。
      *
      * 排定策略是「主通道 + 保险通道」：
      * * 闹钟式 → 精确闹钟（`setAlarmClock`）+ 非精确闹钟（晚 [BACKSTOP_DELAY_MS]）
@@ -168,11 +173,25 @@ class SchedulingCoordinator(
      * 单通道一旦被冻结，用户就是「到点了什么都没发生」。
      */
     private suspend fun scheduleFor(todo: Todo): Boolean {
+        // 先清掉上一次调用留下的降级标记：本函数有多条「什么都不排」的提前返回
+        //（不通知 / 已完成 / 没有未来场次），不清的话这些情况会沿用上一条待办的
+        // 降级结果，界面上就会弹出与实际无关的「精确闹钟权限不足」提示。
+        lastScheduleWasDegraded = false
+
+        // 「不通知」：没有要排的提醒，但必须先撤掉这条待办已有的调度再返回。
+        // 顺序不能反过来依赖下面 nextOccurrenceToRemind 返回 null——那样只是「不排新的」，
+        // 从闹钟式/通知改成不通知时，系统里那条旧闹钟会照点响，用户等于没关掉提醒。
+        if (todo.mode == ReminderMode.NONE) {
+            cancelSchedules(todo.id)
+            return false
+        }
+
         val now = clock.now()
         val occurrence = nextOccurrenceToRemind(todo, now) ?: return false
 
-        lastScheduleWasDegraded = false
-        val plan = todo.toReminderPlanFor(occurrence)
+        // 上面已经挡掉 NONE，这里必然非空；保留 `?:` 是为了以后再加档位时
+        // 不会悄悄排一条空计划出去（编译器会强制在这里做决定）
+        val plan = todo.toReminderPlanFor(occurrence) ?: return false
         val effective = if (plan.strategy == ReminderStrategy.EXACT_ALARM &&
             !exactAlarmPermission.canScheduleExactAlarms()
         ) {
@@ -203,6 +222,8 @@ class SchedulingCoordinator(
      * 超过宽限期就不再补发，避免装上新版本后被历史事项刷屏。
      */
     suspend fun nextOccurrenceToRemind(todo: Todo, now: Long): Long? {
+        // 「不通知」根本没有提醒时刻，放在最前面挡掉：宽限期与周期展开都不必参与
+        if (todo.mode == ReminderMode.NONE) return null
         if (todo.isDone) return null
         val graceStart = now - MISSED_GRACE_MS
 
@@ -291,6 +312,10 @@ class ReminderFiringService(
     override suspend fun fire(todoId: Long, occurrenceStart: Long) {
         val todo = coordinator.findById(todoId) ?: return
         if (todo.isDone) return
+        // 提醒已经排出去之后，用户才把它改成「不通知」时，可能还剩一条在途的触发
+        //（广播已投递、Worker 已开跑），取消调度来不及拦住它。这里再挡一次，
+        // 否则用户明明关掉了提醒却仍然收到通知——这正是「不通知」最不能出的错。
+        if (todo.mode == ReminderMode.NONE) return
         // 必须先判断「这一场是否已经提醒过」，再去标记与重排。
         // 若顺序颠倒，第二次触发会先被重新排定，导致同一场次重复提醒。
         if (todo.remindedOccurrenceStart == occurrenceStart) return

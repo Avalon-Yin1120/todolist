@@ -210,6 +210,44 @@ class DraftFormStateHolderTest {
         assertThat(draft.mode).isEqualTo(ReminderMode.ALARM)
     }
 
+    // ---------------------------------------------------------- 不通知（第三档）
+
+    @Test
+    fun `选不通知时提前量非法也能提交`() {
+        form.open()
+        form.setName("会议")
+        form.setLeadInput("10081")   // 超出 7 天上限
+        assertThat(form.state.value.leadInputInvalid).isTrue()
+
+        form.setMode(ReminderMode.NONE)
+
+        // 界面上提前量整块是隐藏的，用户既看不到提示也没地方改，
+        // 因此这一档必须放行，不能把人卡在表单里
+        assertThat(form.validate()).isEmpty()
+
+        val draft = form.toDraft()
+        assertThat(draft.mode).isEqualTo(ReminderMode.NONE)
+        // 落库时补 0，而不是把那个非法值一起写进数据库
+        assertThat(draft.leadMinutes).isEqualTo(0)
+    }
+
+    @Test
+    fun `切到不通知再切回来提前量还在`() {
+        form.open()
+        // 名称要填，否则 validate() 里会一直存着「名称不能为空」，
+        // 断言「没有别的错误」就变成在断言名称本身，与这条用例想验证的东西无关
+        form.setName("会议")
+        form.setLeadMinutes(30)
+
+        form.setMode(ReminderMode.NONE)
+        form.setMode(ReminderMode.NOTIFICATION)
+
+        // 切档只改方式，不许顺手清空用户填过的提前量
+        assertThat(form.state.value.leadMinutes).isEqualTo(30)
+        assertThat(form.state.value.leadInput).isEqualTo("30")
+        assertThat(form.validate()).isEmpty()
+    }
+
     @Test
     fun `修改起始时间到结束之后会自动顺延结束时间`() {
         form.open()

@@ -33,7 +33,12 @@ data class DraftFormState(
     val leadInput: String = "",
     /** 用户输入的提前量非法（非空但解析失败或超出范围）。 */
     val leadInputInvalid: Boolean = false,
-    /** 提醒方式：通知 / 闹钟式。 */
+    /**
+     * 提醒方式：通知 / 闹钟式 / 不通知。
+     *
+     * 选「不通知」时 [leadMinutes] / [leadInput] 原样留着不清空：用户只是这一条不想被提醒，
+     * 切回通知或闹钟式时先前填过的提前量必须还在，否则每次切档都要重填一遍。
+     */
     val mode: ReminderMode = ReminderMode.NOTIFICATION,
     /** 周期规则。 */
     val recurrence: Recurrence = Recurrence.NONE,
@@ -185,6 +190,12 @@ class DraftFormStateHolder(
         clearError(FormValidator.FIELD_LEAD)
     }
 
+    /**
+     * 切换提醒方式。
+     *
+     * 只改方式，绝不动提前量：[setLeadInput] / [setLeadMinutes] 填过的值保留在状态里，
+     * 用户从「不通知」切回来时输入框还是原样（清空的话每次切档都得重填）。
+     */
     fun setMode(value: ReminderMode) {
         _state.value = _state.value.copy(mode = value)
     }
@@ -255,6 +266,9 @@ class DraftFormStateHolder(
             endAt = current.endAt,
             leadMinutes = current.leadMinutes,
             leadInputInvalid = current.leadInputInvalid,
+            // 「不通知」时界面把提前量整块藏起来了，用户没有地方去修正一个看不见的错误，
+            // 因此这一档直接不校验提前量（详见 FormValidator.validate 的 validateLead）。
+            validateLead = current.mode.needsLeadTime,
         )
         _errors.value = result
         return result
@@ -268,7 +282,11 @@ class DraftFormStateHolder(
             name = ReminderTime.normalizeName(current.name),
             startAt = requireNotNull(current.startAt) { "起始时间未选择" },
             endAt = requireNotNull(current.endAt) { "终止时间未选择" },
-            leadMinutes = current.leadMinutes,
+            // 「不通知」落库时把提前量写成 0，而不是照抄用户上一档填的值：
+            // 这一档的提前量校验是跳过的，那个值可能已经非法（例如 99999），
+            // 原样写进库只会留下一条永远用不上的脏数据；0 与「准点」同义、也无副作用。
+            // 注意这只影响落库，表单状态里的值没动，切回另外两档仍然看得见。
+            leadMinutes = if (current.mode.needsLeadTime) current.leadMinutes else 0,
             mode = current.mode,
             recurrence = current.recurrence,
             weekDays = current.weekDays,

@@ -88,6 +88,48 @@ class ReminderSchedulingTest {
         assertThat(result.degraded).isFalse()
     }
 
+    @Test
+    fun `不通知的待办在三个调度器上都没有任何排定`() = runTest {
+        val result = coordinator.create(draft(mode = ReminderMode.NONE))
+
+        // 三个调度器一起断言：漏掉任何一个（尤其是保险通道）都会变成「说了不提醒却响了」
+        assertThat(exact.scheduled).isEmpty()
+        assertThat(inexact.scheduled).isEmpty()
+        assertThat(work.scheduled).isEmpty()
+        assertThat(coordinator.findById(result.todoId)?.mode).isEqualTo(ReminderMode.NONE)
+        // 什么都没排不等于失败：待办本身建好了，也不该报「精确闹钟降级」
+        assertThat(result.degraded).isFalse()
+    }
+
+    @Test
+    fun `不通知的待办没有下一场要提醒的场次`() = runTest {
+        val todo = TestData.todo(mode = ReminderMode.NONE)
+
+        assertThat(coordinator.nextOccurrenceToRemind(todo, now)).isNull()
+    }
+
+    @Test
+    fun `不通知不会沿用上一条待办的降级结果`() = runTest {
+        // 上一条闹钟式缺权限会把降级标记置 true；紧接着建一条不通知的待办时，
+        // 界面上不能弹出与它无关的「已降级为通知」提示
+        permission.granted = false
+        coordinator.create(draft(name = "要响的", mode = ReminderMode.ALARM))
+
+        val result = coordinator.create(draft(name = "只记录", mode = ReminderMode.NONE))
+
+        assertThat(result.degraded).isFalse()
+    }
+
+    @Test
+    fun `对账不会给不通知的待办排定`() = runTest {
+        repository.insert(
+            draft(name = "只做记录", mode = ReminderMode.NONE).toTodo(existing = null, now = now)
+        )
+
+        assertThat(coordinator.reconcileAll()).isEqualTo(0)
+        assertThat(inexact.scheduled).isEmpty()
+    }
+
     // -------------------------------------------------- 保险通道（真机漏提醒的兜底）
 
     @Test
@@ -233,6 +275,25 @@ class ReminderSchedulingTest {
         assertThat(inexact.planFor(existing.id)?.strategy).isEqualTo(ReminderStrategy.NOTIFICATION)
         assertThat(inexact.planFor(existing.id)?.triggerAt)
             .isEqualTo(now + 63 * TestData.MINUTE)
+    }
+
+    @Test
+    fun `改成不通知会把已有的调度全部撤掉`() = runTest {
+        val created = coordinator.create(draft(mode = ReminderMode.ALARM))
+        // 闹钟式会同时占住精确通道与非精确通道（保险），两条都要撤
+        assertThat(exact.planFor(created.todoId)).isNotNull()
+        assertThat(inexact.planFor(created.todoId)).isNotNull()
+
+        val existing = coordinator.findById(created.todoId)!!
+        coordinator.update(draft(mode = ReminderMode.NONE).copy(id = existing.id))
+
+        assertThat(exact.cancelled).contains(created.todoId)
+        assertThat(inexact.cancelled).contains(created.todoId)
+        assertThat(work.cancelled).contains(created.todoId)
+        assertThat(exact.planFor(created.todoId)).isNull()
+        assertThat(inexact.planFor(created.todoId)).isNull()
+        assertThat(work.planFor(created.todoId)).isNull()
+        assertThat(coordinator.findById(created.todoId)?.mode).isEqualTo(ReminderMode.NONE)
     }
 
     @Test

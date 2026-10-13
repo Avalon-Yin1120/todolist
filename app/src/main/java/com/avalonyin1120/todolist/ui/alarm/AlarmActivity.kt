@@ -1,9 +1,11 @@
 package com.avalonyin1120.todolist.ui.alarm
 
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -72,11 +75,21 @@ import java.util.Locale
  * | 从最近任务里划掉 | `onDestroy` | [endAlarm] |
  * | 通知里点「完成 / 稍后 / 停止」 | 广播接收器 | [AlarmRingService.stopEverything] |
  *
- * `onStop` 上还有一道**延时看门狗**：页面停止可见、且**屏幕还亮着**超过 [LEAVE_GRACE_MS]
- * 就结束本次闹钟。屏幕亮着而闹钟页不可见，只可能是用户已经在用别的应用——真有 ROM
- * 吞掉了 `onUserLeaveHint`，也兜得住。刻意加「屏幕亮着」这个条件：按电源键熄屏时页面
- * 同样会走到 `onStop`，那属于「闹钟还在响，只是屏幕黑了」，此时必须继续响（系统闹钟也是
- * 这个行为），否则用户会报「闹钟自己不响了」。
+ * `onStop` 上还有一道**延时看门狗**：页面停止可见超过 [LEAVE_GRACE_MS] 就结束本次闹钟。
+ * 屏幕亮着而闹钟页不可见，只可能是用户已经在用别的应用——真有 ROM 吞掉了
+ * `onUserLeaveHint`，也兜得住。
+ *
+ * ## 「用户收到了」的四种表达
+ *
+ * 除了页面上的三个按钮，用户还可能用硬件键表态。用户的反馈很明确：**按锁屏键或音量键
+ * 都算已收到，铃声应当停**。
+ *
+ * * **音量键**：会被投递到 Activity（闹钟页上音量键调的本来就是闹钟音量），
+ *   在 [onKeyDown] 里直接结束，并且吞掉事件——不要变成「只是把音量调小、铃还在响」。
+ * * **电源键（锁屏键）**：系统不会把这个键交给应用，只能观察结果——页面 `onStop` 之后
+ *   发现屏幕已经熄灭，就按「用户按了锁屏键」处理。
+ * * 早期版本刻意相反（熄屏后继续响，模仿系统闹钟），结果被用户当成「关不掉」，
+ *   这一版按用户的要求改掉。
  */
 class AlarmActivity : ComponentActivity() {
 
@@ -86,18 +99,33 @@ class AlarmActivity : ComponentActivity() {
     /** 页面是否可见。看门狗靠它判断「是否真的离开了」。 */
     private var visible = false
 
+    /**
+     * 屏幕熄灭（按锁屏键）的监听。
+     *
+     * 电源键不会被投递给应用，但 `ACTION_SCREEN_OFF` 可以：它只是**不允许在清单里静态注册**，
+     * 运行时注册照旧能收到。这是「按锁屏键 = 我收到了」唯一可靠的抓手。
+     *
+     * 为什么还要配合服务侧的唤醒锁收短（见 `AlarmRingService.WAKE_LOCK_TIMEOUT_MS`）：
+     * 只要那段 `SCREEN_BRIGHT_WAKE_LOCK` 还握着，按电源键**屏幕根本不会灭**，
+     * 这个广播也就永远不会来——两个改动是一件事的两半。
+     */
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+            Log.i(TAG, "屏幕已熄灭（锁屏键），结束本次闹钟")
+            endAlarm()
+        }
+    }
+    private var screenOffRegistered = false
+
     private var serviceBound = false
 
     private val handler = Handler(Looper.getMainLooper())
 
-    /** 见类注释：`onStop` 后「屏幕亮着却看不见页面」的延时看门狗。 */
+    /** 见类注释：`onStop` 后「看不见页面」的延时看门狗。 */
     private val leaveWatchdog = Runnable {
         if (visible || isChangingConfigurations || isFinishing) return@Runnable
-        if (!isScreenOn()) {
-            Log.i(TAG, "闹钟页不可见但屏幕已熄灭，继续响铃（等用户处理）")
-            return@Runnable
-        }
-        Log.i(TAG, "闹钟页已不可见且屏幕亮着，结束本次闹钟")
+        Log.i(TAG, "闹钟页已不可见，结束本次闹钟")
         endAlarm()
     }
 
@@ -184,6 +212,12 @@ class AlarmActivity : ComponentActivity() {
         super.onStart()
         visible = true
         handler.removeCallbacks(leaveWatchdog)
+        // 只在页面可见期间听「熄屏」：不可见时闹钟本来就该结束了，不必再监听
+        if (!screenOffRegistered) {
+            screenOffRegistered = runCatching {
+                registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+            }.isSuccess
+        }
     }
 
     override fun onStop() {
@@ -191,7 +225,31 @@ class AlarmActivity : ComponentActivity() {
         visible = false
         // 配置变更（旋转）会走「销毁 + 重建」，此刻不能停铃
         if (isChangingConfigurations) return
+        // 按了电源键（锁屏键）→ 屏幕熄灭。用户的反馈很明确：这时候铃声就该停，
+        // 「按锁屏键」本身就是一种「我收到了」。所以这里不再像早期版本那样区分
+        // 「屏幕亮着才认为用户走了」——那个区分会让熄屏后铃声一直响到超时。
+        if (!isScreenOn()) {
+            Log.i(TAG, "屏幕已熄灭（锁屏键），结束本次闹钟")
+            endAlarm()
+            return
+        }
         handler.postDelayed(leaveWatchdog, LEAVE_GRACE_MS)
+    }
+
+    /**
+     * 音量键也算「用户收到了」。
+     *
+     * 电源键不会被投递给应用（系统直接熄屏），只能靠上面的熄屏检测；
+     * 音量键是会到 Activity 的，而且闹钟页上音量键调的本来就是闹钟音量——
+     * 用户按它是想让它安静下来，那就直接结束，不要只把音量调小、铃还在响。
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            Log.i(TAG, "按了音量键，视为已收到提醒，结束本次闹钟")
+            endAlarm()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     /** 上滑回桌面、切到别的应用、从最近任务进入其它应用都会走这里。 */
@@ -209,6 +267,10 @@ class AlarmActivity : ComponentActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacks(leaveWatchdog)
+        if (screenOffRegistered) {
+            runCatching { unregisterReceiver(screenOffReceiver) }
+            screenOffRegistered = false
+        }
         if (live?.get() === this) live = null
         if (!isChangingConfigurations) {
             endAlarm()

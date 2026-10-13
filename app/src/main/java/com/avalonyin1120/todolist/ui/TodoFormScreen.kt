@@ -317,49 +317,9 @@ fun TodoFormContent(
 
         // ---------------------------------------------------------------- 提醒
         FormCard(title = "提醒") {
-            FormLabel("提前提醒")
-            // FlowRow：放不下就换行，「1 天」不会再被裁掉（此前一行 5 个芯片塞不下）
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                QUICK_LEADS.forEach { minutes ->
-                    FilterChip(
-                        selected = state.leadMinutes == minutes,
-                        onClick = { form.setLeadMinutes(minutes) },
-                        label = { Text(quickLeadLabel(minutes)) },
-                        modifier = Modifier.testTag("$TAG_QUICK_LEAD_PREFIX$minutes"),
-                    )
-                }
-            }
-
-            OutlinedTextField(
-                // 用单独保存的原始文本，这样 0 可以被删掉（删空即视为准点）
-                value = state.leadInput,
-                onValueChange = form::setLeadInput,
-                label = { Text("提前量（分钟）") },
-                placeholder = { Text("留空表示准点提醒") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                isError = errors.containsKey(FormValidator.FIELD_LEAD),
-                supportingText = {
-                    errors[FormValidator.FIELD_LEAD]?.let { Text(messageOf(it)) }
-                        ?: Text("0 或留空表示准点提醒")
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(TAG_LEAD_FIELD),
-            )
-
-            Text(
-                text = "提醒时间：" + reminderPreview(state),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag(TAG_REMINDER_PREVIEW),
-            )
-
-            // 提醒方式：用户选「怎么提醒我」，不涉及「用哪种系统 API」
+            // 先选「怎么提醒」，再问「提前多久」。
+            // 顺序不是随意的：选「不通知」时下面整块提前量会消失，如果方式按钮排在它下面，
+            // 刚点过的那一行会从手指底下跳走，想改回来都难点中。
             FormLabel("提醒方式")
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -381,16 +341,68 @@ fun TodoFormContent(
                         .weight(1f)
                         .testTag(TAG_MODE_ALARM),
                 )
+                FilterChip(
+                    selected = state.mode == ReminderMode.NONE,
+                    onClick = { form.setMode(ReminderMode.NONE) },
+                    label = { Text("不通知") },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag(TAG_MODE_NONE),
+                )
             }
             Text(
-                text = if (state.mode == ReminderMode.ALARM) {
-                    "到点响铃、点亮屏幕并弹出提醒页（需要精确闹钟权限）"
-                } else {
-                    "只发一条通知，安静不打扰"
-                },
+                text = modeDescription(state.mode),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            // 「不通知」没有任何提醒时刻可算，提前量对它毫无意义（needsLeadTime = false），
+            // 于是整块（快捷芯片 + 输入框 + 提醒时间预览）都不显示。
+            // 注意只是「不显示」：leadMinutes / leadInput 仍原样留在表单状态里，
+            // 用户切回通知 / 闹钟式时先前填过的提前量立刻回来，不必重填。
+            if (state.mode.needsLeadTime) {
+                FormLabel("提前提醒")
+                // FlowRow：放不下就换行，「1 天」不会再被裁掉（此前一行 5 个芯片塞不下）
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    QUICK_LEADS.forEach { minutes ->
+                        FilterChip(
+                            selected = state.leadMinutes == minutes,
+                            onClick = { form.setLeadMinutes(minutes) },
+                            label = { Text(quickLeadLabel(minutes)) },
+                            modifier = Modifier.testTag("$TAG_QUICK_LEAD_PREFIX$minutes"),
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    // 用单独保存的原始文本，这样 0 可以被删掉（删空即视为准点）
+                    value = state.leadInput,
+                    onValueChange = form::setLeadInput,
+                    label = { Text("提前量（分钟）") },
+                    placeholder = { Text("留空表示准点提醒") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    isError = errors.containsKey(FormValidator.FIELD_LEAD),
+                    supportingText = {
+                        errors[FormValidator.FIELD_LEAD]?.let { Text(messageOf(it)) }
+                            ?: Text("0 或留空表示准点提醒")
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(TAG_LEAD_FIELD),
+                )
+
+                Text(
+                    text = "提醒时间：" + reminderPreview(state),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag(TAG_REMINDER_PREVIEW),
+                )
+            }
         }
 
         Spacer(Modifier.height(24.dp))
@@ -639,6 +651,18 @@ private fun recurrenceChipLabel(option: Recurrence): String = when (option) {
 
 private val QUICK_LEADS = listOf(0, 5, 30, 60, 1440)
 
+/**
+ * 提醒方式的说明文案。
+ *
+ * 写成 when 而不是 if/else：以后再补档位时编译器会强制在这里给出文案，
+ * 不会出现「选项能点、说明还是上一档的话」这种静默漏配。
+ */
+private fun modeDescription(mode: ReminderMode): String = when (mode) {
+    ReminderMode.ALARM -> "到点响铃、点亮屏幕并弹出提醒页（需要精确闹钟权限）"
+    ReminderMode.NOTIFICATION -> "只发一条通知，安静不打扰"
+    ReminderMode.NONE -> "到点不会提醒，只作为记录保留"
+}
+
 private fun quickLeadLabel(minutes: Int): String = when (minutes) {
     0 -> "准点"
     5 -> "5 分钟"
@@ -648,7 +672,12 @@ private fun quickLeadLabel(minutes: Int): String = when (minutes) {
     else -> "$minutes 分钟"
 }
 
-/** 表单里显示的提醒时刻预览。 */
+/**
+ * 表单里显示的提醒时刻预览。
+ *
+ * 「不通知」没有提醒时刻可言，整块预览在界面上是不显示的（见 `needsLeadTime`），
+ * 这里给 NONE 一个空后缀只是为了 when 穷尽——以后加档位时编译器仍会拦住我们。
+ */
 private fun reminderPreview(state: DraftFormState): String {
     val start = state.startAt ?: return "—"
     val zone = ZoneId.systemDefault()
@@ -657,6 +686,7 @@ private fun reminderPreview(state: DraftFormState): String {
     val suffix = when (state.mode) {
         ReminderMode.ALARM -> "（闹钟式）"
         ReminderMode.NOTIFICATION -> "（通知）"
+        ReminderMode.NONE -> ""
     }
     val repeat = if (state.recurrence.isRecurring) {
         // 复用列表里的同一套描述逻辑，保证表单预览与列表徽章一致

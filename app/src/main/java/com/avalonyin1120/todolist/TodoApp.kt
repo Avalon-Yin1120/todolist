@@ -10,6 +10,7 @@ import com.avalonyin1120.todolist.domain.Clock
 import com.avalonyin1120.todolist.domain.SystemClock
 import com.avalonyin1120.todolist.notify.NotificationHelper
 import com.avalonyin1120.todolist.reminder.AlarmReminderScheduler
+import com.avalonyin1120.todolist.reminder.AlarmStyle
 import com.avalonyin1120.todolist.reminder.ReminderFireHandler
 import com.avalonyin1120.todolist.reminder.ReminderFiringService
 import com.avalonyin1120.todolist.reminder.ReminderScheduler
@@ -119,16 +120,19 @@ class AppGraph(application: Application) {
      *
      * 用 `setAlarmClock`（系统级「用户可见的闹钟」），国产 ROM 的省电策略普遍对它放行。
      */
-    private val exactScheduler: ReminderScheduler = AlarmReminderScheduler(application, exact = true)
+    private val exactScheduler: ReminderScheduler =
+        AlarmReminderScheduler(application, AlarmStyle.ALARM_CLOCK)
 
     /**
-     * 非精确闹钟通道：通知方式的主通道，同时是精确通道的保险。
+     * 通知方式的主通道，同时是闹钟式通道的保险。
      *
-     * 不需要任何特殊权限，且比 WorkManager 可靠——JobScheduler 在国产 ROM 上
-     * 会被整体推迟到「用户下次打开 App」，而闹钟即使 Doze 也会被投递。
+     * 从 v19 起这里也用**精确**闹钟（`setExactAndAllowWhileIdle`）：应用声明了
+     * `USE_EXACT_ALARM`，精确权限是自动授予的，没有理由再让通知式提醒「大约那个点」响。
+     * 它比 WorkManager 可靠得多——JobScheduler 在国产 ROM 上会被整体推迟到
+     * 「用户下次打开 App」，而闹钟即使 Doze 也会被投递。
      */
-    private val inexactScheduler: ReminderScheduler =
-        AlarmReminderScheduler(application, exact = false)
+    private val notificationScheduler: ReminderScheduler =
+        AlarmReminderScheduler(application, AlarmStyle.EXACT)
 
     /** WorkManager 通道：只作为最后一道保险。 */
     private val workScheduler: ReminderScheduler = WorkReminderScheduler(application)
@@ -136,7 +140,7 @@ class AppGraph(application: Application) {
     val coordinator: SchedulingCoordinator = SchedulingCoordinator(
         repository = repository,
         exactScheduler = exactScheduler,
-        inexactScheduler = inexactScheduler,
+        inexactScheduler = notificationScheduler,
         workScheduler = workScheduler,
         clock = clock,
         exactAlarmPermission = exactAlarmPermission,

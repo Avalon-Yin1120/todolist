@@ -4,8 +4,19 @@
 
     <!-- 发送提醒通知（Android 13+ 需要运行时授予） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 精确闹钟（Android 12+ 为特殊权限，需用户在系统设置中允许） -->
+    <!--
+      精确闹钟，两个权限分别服务于不同的 Android 版本：
+      * SCHEDULE_EXACT_ALARM（Android 12）：需要用户在系统设置里手动允许，可能被拒；
+      * USE_EXACT_ALARM（Android 13+）：**安装即授予、用户关不掉**，代价是 Google Play
+        只允许「闹钟 / 日历」类应用声明它，上架时要在后台说明用途（本应用属提醒类，符合）。
+
+      为什么两个都要：只留 SCHEDULE_EXACT_ALARM 时，用户一关（部分 ROM 默认就是关的）
+      提醒就从「精确到分钟」退化成「大约那个点」，而且那个开关页还不一定找得到；
+      只留 USE_EXACT_ALARM 时 Android 12 上根本没有这个权限可声明。
+      调度器仍保留「两个都没有就退化为非精确」的兜底，所以不会因此崩。
+    -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- 开机后重新排定未完成的提醒 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 闹钟式提醒：全屏 Intent 在锁屏上直接弹出提醒页 -->

@@ -16,10 +16,22 @@ import android.os.PowerManager
  * 权限（原因见 [ReminderHealth.openBatteryOptimizationSettings] 的注释）。
  */
 interface BatteryOptimizationPermission {
-    /** 是否已豁免电池优化（豁免即允许后台运行）。读取不需要任何权限。 */
+    /**
+     * 是否已豁免电池优化（豁免即允许后台运行）。读取不需要任何权限。
+     *
+     * 注意它只反映 AOSP 的那套白名单。ColorOS 上真正决定「后台能不能跑」的是
+     * 耗电管理里的「允许完全后台行为」，那一处**没有公开的读取接口**，
+     * 因此查询结果可能在 ColorOS 上偏乐观——界面文案不要因此就说死「已允许」，
+     * 而是把用户引到 [requestIgnore] 打开的那一页自己确认。
+     */
     fun isIgnoringBatteryOptimizations(): Boolean
 
-    /** 打开系统的电池优化列表页，由用户手动把本应用设为「不优化」。 */
+    /**
+     * 打开「允许后台运行」相关的设置页，由用户手动允许。
+     *
+     * 具体跳到哪一页由 [ReminderHealth.openBatteryOptimizationSettings] 的
+     * 候选意图链在运行时决定（ColorOS 的耗电管理 → 自启动 → 系统电池优化列表 → 应用详情页）。
+     */
     fun requestIgnore()
 }
 

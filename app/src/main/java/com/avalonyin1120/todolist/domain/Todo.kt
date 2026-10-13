@@ -6,7 +6,7 @@ package com.avalonyin1120.todolist.domain
  * @param startAt 起始时间（epoch 毫秒），也是提醒的基准时间
  * @param endAt   终止时间（epoch 毫秒）
  * @param leadMinutes 提前提醒量（分钟），0 表示准点提醒
- * @param mode 提醒方式：通知 / 闹钟式（响铃 + 亮屏 + 全屏页）
+ * @param mode 提醒方式：通知 / 闹钟式（响铃 + 亮屏 + 全屏页）/ 不通知（只做记录，不排任何提醒）
  * @param recurrence 周期规则；[Recurrence.NONE] 表示一次性待办
  * @param weekDays 周重复选中的星期几；为空时回落到开始日期所在的星期
  * @param monthDays 月重复选中的几号；为空时回落到开始日期的号数

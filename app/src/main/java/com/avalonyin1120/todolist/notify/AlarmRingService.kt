@@ -80,6 +80,10 @@ class AlarmRingService : Service() {
         // 有界面接管了：取消待执行的「无客户端就停铃」
         clientBound = true
         handler.removeCallbacks(stopWhenNoClient)
+        // 页面已经起来了，屏幕唤醒锁的使命结束——见 [WAKE_LOCK_TIMEOUT_MS]：
+        // 继续握着它会让「按锁屏键」失效（设备根本睡不着），而用户按锁屏键是要停铃的。
+        // 页面自己带 FLAG_KEEP_SCREEN_ON，看页面期间屏幕不会自己灭。
+        releaseWakeLock()
         return binder
     }
 
@@ -150,7 +154,7 @@ class AlarmRingService : Service() {
             val manager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             wakeLock = manager.newWakeLock(
                 // 屏幕 + CPU 都保持，闹钟页才能立刻可见；
-                // 用超时兜底，避免异常路径下一直占着唤醒锁耗电
+                // 超时只留很短一段，原因见 [WAKE_LOCK_TIMEOUT_MS]
                 android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
                     android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "todolist:alarm",
@@ -237,8 +241,16 @@ class AlarmRingService : Service() {
         const val EXTRA_TODO_NAME = "extra_todo_name"
         private const val NOTIFICATION_ID = 0x5A1A
 
-        /** 唤醒锁最长持有 10 分钟，足够用户处理提醒。 */
-        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
+        /**
+         * 屏幕唤醒锁的持有时长。
+         *
+         * 只要它还在手上，**电源键就按不灭屏**（`SCREEN_BRIGHT_WAKE_LOCK` 会让设备保持 Awake），
+         * 于是「按锁屏键 = 我收到了 → 停铃」这条路直接失效——实测复现过：
+         * 按了电源键，`dumpsys power` 里 `mWakefulness` 仍然是 Awake，闹钟页当然收不到 onStop。
+         * 所以它只在「把屏幕点亮、把闹钟页拉起来」这一小段时间里有效：
+         * 页面一旦绑定上来（见 onBind）就立刻释放，页面本身用 FLAG_KEEP_SCREEN_ON 保持常亮。
+         */
+        private const val WAKE_LOCK_TIMEOUT_MS = 30 * 1000L
 
         /** 解绑后的宽限期：给配置变更（旋转）留出重新绑定的时间。 */
         private const val UNBIND_GRACE_MS = 600L

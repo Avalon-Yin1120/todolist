@@ -23,6 +23,9 @@ object FormValidator {
     /**
      * @param leadInputInvalid 输入框文本非空但解析失败或超出范围。
      *   这种输入不能静默按 0 处理，否则用户会误以为保存的是自己填的值。
+     * @param validateLead 是否校验提前量。选「不通知」时提前量整块从界面隐藏，
+     *   用户既看不到错误提示、也没有地方去改，此时必须跳过这一项，
+     *   否则保存会被一个看不见的字段永久拦住。
      */
     fun validate(
         rawName: String,
@@ -30,6 +33,7 @@ object FormValidator {
         endAt: Long?,
         leadMinutes: Int,
         leadInputInvalid: Boolean = false,
+        validateLead: Boolean = true,
     ): Map<String, FormError> = buildMap {
         val name = ReminderTime.normalizeName(rawName)
         when {
@@ -39,7 +43,7 @@ object FormValidator {
         if (startAt == null || endAt == null || !ReminderTime.isValidRange(startAt, endAt)) {
             put(FIELD_RANGE, FormError.END_NOT_AFTER_START)
         }
-        if (leadInputInvalid || !ReminderTime.isValidLead(leadMinutes)) {
+        if (validateLead && (leadInputInvalid || !ReminderTime.isValidLead(leadMinutes))) {
             put(FIELD_LEAD, FormError.LEAD_OUT_OF_RANGE)
         }
     }

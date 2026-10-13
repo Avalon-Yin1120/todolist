@@ -107,6 +107,11 @@ data class TodoUiState(
     val canPostNotifications: Boolean = true,
     /** 闹钟式提醒能否弹出整屏提醒页（Android 14+ 需用户允许全屏通知） */
     val fullScreenIntentAllowed: Boolean = true,
+    /**
+     * 通知样式是否能用：当前实际使用的那条渠道会弹横幅、锁屏可见，
+     * 且（应用开着提示音时）没有被系统判成静默通知。
+     */
+    val notificationChannelOk: Boolean = true,
     /** 当前是不是需要额外开「自启动」的国产 ROM（只影响提示文案） */
     val needsOemBackgroundGuide: Boolean = false,
     val settings: SettingsUiState = SettingsUiState(),
@@ -147,6 +152,8 @@ class TodoViewModel(
     private val canPostNotifications: () -> Boolean = { true },
     /** Android 14+ 的全屏通知是否被允许；默认 true */
     private val fullScreenIntentAllowed: () -> Boolean = { true },
+    /** 通知样式（静默 / 横幅 / 锁屏）是否可用；默认 true，测试只关心别的逻辑 */
+    private val notificationChannelOk: () -> Boolean = { true },
     /** 是否需要提示「国产 ROM 要额外开自启动」 */
     private val oemBackgroundGuideNeeded: () -> Boolean = { false },
     /** 后台运行（电池优化白名单）能力；为空表示不检查（测试里常用） */
@@ -173,6 +180,7 @@ class TodoViewModel(
             batteryOptimizationIgnored = batteryOptimization?.isIgnoringBatteryOptimizations() ?: true,
             canPostNotifications = canPostNotifications(),
             fullScreenIntentAllowed = fullScreenIntentAllowed(),
+            notificationChannelOk = notificationChannelOk(),
             needsOemBackgroundGuide = oemBackgroundGuideNeeded(),
             settings = readSettings(),
             version = versionInfo ?: VersionInfo.of(application),
@@ -209,6 +217,7 @@ class TodoViewModel(
             screen = if (edit.isOpen) Screen.FORM else local.screen,
             canPostNotifications = local.canPostNotifications,
             fullScreenIntentAllowed = local.fullScreenIntentAllowed,
+            notificationChannelOk = local.notificationChannelOk,
             needsOemBackgroundGuide = local.needsOemBackgroundGuide,
             oneOffEdit = edit.oneOffSourceId != 0L,
             formOpen = edit.isOpen,
@@ -365,8 +374,13 @@ class TodoViewModel(
         val draft = form.toDraft()
         val oneOffSourceId = editState.value.oneOffSourceId
         viewModelScope.launch {
-            // 记住这次的提前量，下次新建时作为默认值
-            settings.lastLeadMinutes = draft.leadMinutes
+            // 记住这次的提前量，下次新建时作为默认值。
+            // 「不通知」除外：这一档没有提前量可言（表单里整块隐藏、校验也跳过，
+            // 草稿里的值是补出来的 0）。照记的话下次新建的默认提前量会被清成 0，
+            // 用户明明只是建了一条不需要提醒的记录，却把之前选的提前量丢了。
+            if (draft.mode.needsLeadTime) {
+                settings.lastLeadMinutes = draft.leadMinutes
+            }
 
             val result = if (draft.id == 0L) {
                 coordinator.create(draft)
@@ -536,6 +550,7 @@ class TodoViewModel(
                 // 这几项用户都可能在系统设置里改，回到前台时一起重读
                 canPostNotifications = canPostNotifications(),
                 fullScreenIntentAllowed = fullScreenIntentAllowed(),
+                notificationChannelOk = notificationChannelOk(),
                 batteryOptimizationIgnored =
                     batteryOptimization?.isIgnoringBatteryOptimizations()
                         ?: it.batteryOptimizationIgnored,
@@ -581,6 +596,7 @@ class TodoViewModel(
         val batteryOptimizationIgnored: Boolean = true,
         val canPostNotifications: Boolean = true,
         val fullScreenIntentAllowed: Boolean = true,
+        val notificationChannelOk: Boolean = true,
         val needsOemBackgroundGuide: Boolean = false,
         val settings: SettingsUiState,
         val notice: Notice? = null,
@@ -629,6 +645,12 @@ class TodoViewModel(
                         },
                         oemBackgroundGuideNeeded = {
                             com.avalonyin1120.todolist.sys.ReminderHealth.needsOemBackgroundGuide()
+                        },
+                        notificationChannelOk = {
+                            com.avalonyin1120.todolist.sys.ReminderHealth.activeChannelHealthy(
+                                context = application,
+                                soundEnabled = graph.settings.notificationSound,
+                            )
                         },
                         batteryOptimization = graph.batteryOptimization,
                     ) as T

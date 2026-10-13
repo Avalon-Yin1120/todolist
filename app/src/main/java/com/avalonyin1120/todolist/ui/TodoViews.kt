@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
+import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.TimeBucket
 import com.avalonyin1120.todolist.domain.Todo
 import com.avalonyin1120.todolist.domain.TodoClassifier
@@ -663,8 +664,17 @@ private fun bucketLabel(bucket: TimeBucket): String = when (bucket) {
     TimeBucket.PAST -> "已过去"
 }
 
-private fun modeLabel(todo: Todo): String =
-    if (todo.mode == com.avalonyin1120.todolist.domain.ReminderMode.ALARM) "闹钟" else "通知"
+/**
+ * 待办卡片上的提醒方式标签。
+ *
+ * 「不通知」也照样显示「不提醒」：卡片上一个标签都没有的话，用户会以为
+ * 是提醒坏了或没排上，写出来才说明这是他自己选的、这条只做记录。
+ */
+private fun modeLabel(todo: Todo): String = when (todo.mode) {
+    ReminderMode.ALARM -> "闹钟"
+    ReminderMode.NOTIFICATION -> "通知"
+    ReminderMode.NONE -> "不提醒"
+}
 
 private fun formatDateTime(epochMillis: Long, zone: ZoneId): String =
     Instant.ofEpochMilli(epochMillis).atZone(zone)

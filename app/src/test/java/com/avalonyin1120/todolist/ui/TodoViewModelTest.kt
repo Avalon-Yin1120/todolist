@@ -159,6 +159,28 @@ class TodoViewModelTest {
     }
 
     @Test
+    fun `提交不通知的待办不排任何调度且不会清掉记住的提前量`() = runTest(testDispatcher) {
+        settings.lastLeadMinutes = 30
+        viewModel.openCreateForm()
+        viewModel.form.setName("只做记录")
+        viewModel.form.setLeadMinutes(30)
+        viewModel.form.setMode(ReminderMode.NONE)
+
+        viewModel.submitForm()
+        settle()
+
+        val todo = viewModel.uiState.value.todos.single()
+        assertThat(todo.mode).isEqualTo(ReminderMode.NONE)
+        // 落库的提前量被补成 0（这一档用不上），但记住的默认值不能被它覆盖：
+        // 用户只是建了一条不提醒的记录，下次新建不该发现提前量被清空了
+        assertThat(todo.leadMinutes).isEqualTo(0)
+        assertThat(settings.lastLeadMinutes).isEqualTo(30)
+        assertThat(exact.scheduled).isEmpty()
+        assertThat(inexact.scheduled).isEmpty()
+        assertThat(work.scheduled).isEmpty()
+    }
+
+    @Test
     fun `提示消费后清空`() = runTest(testDispatcher) {
         fillValidForm()
         viewModel.submitForm()

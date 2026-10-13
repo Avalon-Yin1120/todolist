@@ -29,11 +29,13 @@ android {
         applicationId = "com.avalonyin1120.todolist"
         minSdk = 26
         targetSdk = 35
-        // 1.0.0 起就是正式发布的版本号；包名也在这一版从 com.example.todolist 改了过来，
-        // 所以对 Play 而言这是一个全新应用，versionCode 从 1 重新开始。
-        // 之后每次发版只需把这两个值往上加（设置 → 版本号 里显示的就是它们）。
+        // 目前**不发布正式版**：这一版仍是预览版，版本号里带 preview，
+        // 「设置 → 版本号」据此显示「预览构建」（见 VersionInfo.buildTypeLabel）。
+        // 正式发版时去掉 preview 并把 versionCode 加一。
+        // 包名在 v17 已从 com.example.todolist 改成 com.avalonyin1120.todolist，
+        // 所以对 Play 而言这是一个全新应用，versionCode 从 1 开始。
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.0.0-preview1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

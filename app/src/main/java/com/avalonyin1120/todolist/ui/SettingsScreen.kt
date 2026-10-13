@@ -149,7 +149,8 @@ fun SettingsScreen(
                     "已允许后台运行，到点提醒不会被系统限制。"
                 } else {
                     "系统可能限制本应用在后台运行，导致到点提醒变晚甚至不响。" +
-                        "允许后台运行后，闹钟式提醒才能准时响铃并亮屏。"
+                        "点「去设置」会打开本应用的「应用详情」页（厂商 ROM 的耗电管理入口都在它里面）：" +
+                        "在里面把耗电管理设为「允许完全后台行为」，再顺手打开「允许自启动」。"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -158,7 +159,7 @@ fun SettingsScreen(
                 TextButton(
                     onClick = onRequestIgnoreBatteryOptimization,
                     modifier = Modifier.testTag(TAG_BATTERY_EXEMPT),
-                ) { Text("允许后台运行") }
+                ) { Text("去设置") }
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))

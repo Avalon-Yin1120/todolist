@@ -366,6 +366,7 @@ fun TodoListScreen(
                 canScheduleExact = uiState.canScheduleExact,
                 canPostNotifications = uiState.canPostNotifications,
                 batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
+                notificationChannelOk = uiState.notificationChannelOk,
                 onOpenReminderHealth = onOpenReminderHealth,
             )
 
@@ -993,10 +994,17 @@ private fun PermissionBanner(
     canScheduleExact: Boolean,
     canPostNotifications: Boolean,
     batteryOptimizationIgnored: Boolean,
+    notificationChannelOk: Boolean,
     onOpenReminderHealth: () -> Unit,
 ) {
-    val missing = listOf(canScheduleExact, canPostNotifications, batteryOptimizationIgnored)
-        .count { !it }
+    // 通知样式（静默 / 横幅 / 锁屏）也算一项：只提示「通知权限没开」是不够的，
+    // 权限开着但被系统判成静默通知时，用户同样收不到会飘出来的提醒。
+    val missing = listOf(
+        canScheduleExact,
+        canPostNotifications,
+        batteryOptimizationIgnored,
+        notificationChannelOk,
+    ).count { !it }
     if (missing == 0) return
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
@@ -1090,6 +1098,7 @@ const val TAG_SCOPE_ALL = "scope_all"
 /** 提醒方式与周期的测试标签。 */
 const val TAG_MODE_NOTIFICATION = "mode_notification"
 const val TAG_MODE_ALARM = "mode_alarm"
+const val TAG_MODE_NONE = "mode_none"
 const val TAG_RECURRENCE_PREFIX = "recurrence_"
 const val TAG_WEEKDAY_PREFIX = "weekday_"
 const val TAG_MONTHDAY_PREFIX = "monthday_"
