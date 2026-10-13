@@ -179,7 +179,14 @@ class TodoViewModel(
             // 「今天」必须取自注入的时钟/时区，而不是系统时钟：
             // 否则测试里 FakeClock 的日期和界面认的日期会不一致，
             // 日历首帧就会落到错误的页上。
-            selectedDate = LocalDate.ofInstant(java.time.Instant.ofEpochMilli(clock.now()), zone),
+            //
+            // 这里刻意不用 `LocalDate.ofInstant(...)`：那个方法要 API 34，而本应用
+            // minSdk 26 —— lint 的 NewApi 检查把它标成了 release 阻断错误
+            // （在 Android 8~13 上会直接 NoSuchMethodError 崩溃，只在 API 35 模拟器上
+            //   测不出来）。`Instant.atZone(zone).toLocalDate()` 从 API 26 起就有。
+            selectedDate = java.time.Instant.ofEpochMilli(clock.now())
+                .atZone(zone)
+                .toLocalDate(),
         )
     )
 

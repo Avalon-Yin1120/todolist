@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 13+ 的「主题图标」（单色图标）图层。
+
+  系统会把这份前景当作蒙版来染色，因此这里只关心**形状**，颜色必须是纯色、且不能有
+  半透明（半透明会被当成不同的不透明度叠在主题色上，效果是灰一块）。
+  形状与 @drawable/ic_launcher_foreground 保持一致：勾选 + 上下两条线，
+  但把原来的 0.75 / 0.5 透明度改成实心，靠线宽区分主次。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,54l6,6l0,0l16,-16l4.5,4.5l-20.5,20.5l-10.5,-10.5z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,76h36v5h-36z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,27h36v5h-36z" />
+</vector>

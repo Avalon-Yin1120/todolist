@@ -60,4 +60,7 @@
     <string name="alarm_channel_name">闹钟式提醒</string>
     <string name="alarm_channel_desc">闹钟式提醒正在响铃时的常驻通知</string>
     <string name="alarm_ringing">闹钟式提醒正在响铃</string>
+    <!-- 响铃时常驻通知上的两个按钮：即使闹钟页拉不起来，也必须能就地停掉 -->
+    <string name="alarm_action_stop">停止</string>
+    <string name="alarm_action_done">完成</string>
 </resources>

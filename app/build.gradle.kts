@@ -33,7 +33,7 @@ android {
         // 所以对 Play 而言这是一个全新应用，versionCode 从 1 重新开始。
         // 之后每次发版只需把这两个值往上加（设置 → 版本号 里显示的就是它们）。
         versionCode = 1
-        versionName = "1.0.0-rc1"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

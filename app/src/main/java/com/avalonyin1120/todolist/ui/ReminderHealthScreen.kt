@@ -141,8 +141,8 @@ fun ReminderHealthScreen(
                 ok = batteryOptimizationIgnored,
                 title = "允许后台运行",
                 why = "系统的省电策略会把后台应用冻结，闹钟和通知都会因此不响。" +
-                    "加入电池优化白名单后，到点才能被唤醒。",
-                actionLabel = "去允许",
+                    "点开系统列表后找到「待办提醒」，选「不优化」即可。",
+                actionLabel = "去设置",
                 tag = TAG_HEALTH_BATTERY,
                 onAction = onRequestIgnoreBatteryOptimization,
             )

@@ -73,6 +73,27 @@ object ReminderHealth {
     }
 
     /**
+     * 打开系统的「电池优化」列表页，让用户本应用选「不优化」。
+     *
+     * ## 为什么用列表页，而不是那条会弹确认框的 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
+     *
+     * 后者要申请 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 权限，而**Google Play 的内容政策
+     * 不允许普通应用申请它**：Android 自带的 lint 就有专门一条检查
+     * （`BatteryLife`）把声明该权限判为违反 Play 政策，现实中也确实有应用因此被拒。
+     * 本应用要的是「闹钟到点能被唤醒」，用列表页 + 文案引导同样能达到目的，
+     * 只是用户要多点一步，换来的是上架环节没有这个风险。
+     *
+     * 注意：**读取**「是否已豁免」（`PowerManager.isIgnoringBatteryOptimizations`）
+     * 不需要任何权限，所以本页的状态判断照旧准确。
+     */
+    fun openBatteryOptimizationSettings(context: Context) {
+        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        launchOrAppDetails(context, intent)
+    }
+
+    /**
      * 当前系统是不是常见的「需要额外开自启动」的国产 ROM。
      *
      * 只用来决定是否展示专项引导文案，不做任何跳转（那些页面的 Intent 各版本不一致，

@@ -3,7 +3,7 @@
 Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止时间 / 提前提醒量），
 按时间顺序展示，到点提醒。支持**周期待办**、**两种提醒方式**、**日/周/月三种日历视图**。
 
-- 包名 `com.avalonyin1120.todolist`｜版本 `1.0.0-rc1`
+- 包名 `com.avalonyin1120.todolist`｜版本 `1.0.0`（首发）
 - **默认用通知式提醒**（安静、不需要特殊权限、通知上就能直接完成）；想要到点响铃 + 亮屏 + 全屏提醒页，
   在设置里打开「默认使用闹钟式提醒」，或在单条待办上选「闹钟式」
 
@@ -25,6 +25,7 @@ Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止�
 | 关于与隐私 | 「关于待办提醒」讲清三层提醒通道与两种提醒方式；「隐私」逐条说明数据存在哪、不做什么、每个权限用在哪；「版本号」展示版本/包名/构建类型/数据库版本/设备 API |
 | 整屏表单 | 字段较多，用整屏页面而非对话框承载；按「名称 / 重复 / 时间 / 提醒」分卡，重复选择紧跟名称 |
 | 提醒通知可就地操作 | 通知上直接「完成」或「10 分钟后再提醒」，不必打开 App（后台拉不起界面时这尤其关键） |
+| **响铃随时停得掉** | 铃声只有一个持有者（`AlarmRinger`），「知道了 / 完成 / 稍后 / 返回键 / 上滑回桌面 / 通知上的停止」全都收敛到同一个出口；响铃时常驻通知自带**停止 / 完成**按钮（闹钟页被系统拦住时也能停）；无论如何最长 5 分钟自动停 |
 | 通知会响一下 | 通知式提醒到达时播放一次系统提示音，可在设置里单独关掉（关掉后仍会弹通知，只是不出声） |
 | 提醒可靠性检查 | 一页看全「通知权限 / 精确闹钟 / 允许后台运行 / 全屏提醒 / 国产 ROM 自启动」，
 缺项时顶部横幅提示「有 N 项未开启，可能到点不提醒」 |
@@ -33,7 +34,7 @@ Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止�
 并在界面顶部横幅 + Snackbar 告知用户；**「到点不响」时第一个该看的就是「提醒可靠性检查」页**。
 
 > 真机提醒为什么可能不响（重要）：见 [§5 提醒的可靠性](#5-提醒的可靠性为什么到点不响)。
-> 正式发布前还差哪些事：见 [§10 发布清单](#10-发布清单v100-还差什么)。
+> 正式发布前还差哪些事：见 [§10 发布清单](#10-发布清单v100)。
 
 ---
 
@@ -145,7 +146,7 @@ cd D:\Download\Todolist
 
 > release 签名从 `release/keystore.properties` 读取；该目录**不进版本库**。
 > 文件不存在时 `assembleRelease` 会退回 debug 签名照常构建（便于别人 clone 后编译），
-> 只是产物不能上架。签名材料与口令的备份方式见 [§10 发布清单](#10-发布清单v100-还差什么)。
+> 只是产物不能上架。签名材料与口令的备份方式见 [§10 发布清单](#10-发布清单v100)。
 
 ### 3.3 从零复现环境
 
@@ -182,7 +183,10 @@ Start-Process $emu -ArgumentList '-avd','todo_api35','-no-boot-anim','-gpu','hos
 | `domain/WeekWindowTest` | 周视图时段：默认值、合法值原样返回、**起始/结束互相夹取（永远至少 2 小时）**、越界与负数兜底、候选范围选不出非法组合、刻度步长随窗口宽度自动稀疏且数量受控 |
 | `ui/CompactCalendarPagingTest` | 日期对话框翻月：页↔月互逆、相邻月差一页、**固定 42 格（6 行 × 7 列）**、首日周一末日周日、闰年二月也补齐 |
 | `notify/NotificationHelperTest` | 渠道创建与重要性、幂等、通知 id 映射、通知内容、点击跳转、**有声/静音两个渠道按设置二选一且开关运行时生效**、**升级时清掉旧渠道**、取消、权限识别 |
-| `notify/AlarmRingServiceTest` | 响铃服务生命周期：启动即响、**页面解绑后停铃**、**宽限期内重新绑定则继续响**、销毁即停、立刻静音入口、重复投递不会留下第二条无人持有的铃声 |
+| `notify/AlarmRingServiceTest` | 响铃服务生命周期：启动即响、**页面解绑后停铃**、**宽限期内重新绑定则继续响**、销毁即停、立刻静音入口、重复投递不会留下第二条无人持有的铃声、**响铃通知自带「停止/完成」两个按钮**、**「停止全部」不会误停另一条待办的铃声**、**迟到的启动指令不会重新响铃且服务自行退出** |
+| `notify/AlarmRingerTest` | 铃声持有者的契约（v18 新增）：起铃后状态与待办一致、换一条待办即替换、同一条重复投递不打断、能识别「正在响的是另一条」、**超时兜底自动停**、**刚被结束的待办不会因为迟到启动又响**、抑制窗口过后可再次响铃、抑制只针对刚结束的那一条、先前的超时不会波及下一次 |
+
+> 当前共 **16 个测试类 / 260 个用例**，`.\gradlew :app:testDebugUnitTest --offline` 全绿。
 
 ### 4.2 仪器化测试（API 35 模拟器）
 
@@ -305,27 +309,38 @@ $pkg='com.avalonyin1120.todolist'
 
 ---
 
-### 4.6 闹钟响铃必须与闹钟页同生命周期
+### 4.6 闹钟响铃：一个持有者、一个出口
 
-用户反馈「有时关闭界面没了，闹钟还在继续响」。两个独立的根因，都已修掉：
+用户先后反馈过两次「闹钟关不掉」「界面关了还在响」。两次的根因都不是某条停止路径写错，
+而是**铃声有两个可能的持有者**（前台服务一个、闹钟页一个），导致每个停止入口都得先判断
+「现在是谁在响」——只要漏掉一个分支，就留下一条永远停不下来的路径：
 
-1. **服务与页面毫无关系**。响铃由 `AlarmRingService`（前台服务）持有，而闹钟页只
-   `finish()` 自己；返回键、上滑划掉、被系统回收这三条路径都**不会**执行 `finish()` 里的收尾，
-   于是服务继续响。现在闹钟页在 `onCreate` **绑定**该服务，页面销毁时系统自动解绑，
-   服务的 `onUnbind` 停铃并 `stopSelf()`。
-   解绑后留 600ms 宽限期（`UNBIND_GRACE_MS`）：屏幕旋转也会走「销毁 + 重建」，
-   新页面在这段时间内重新绑定就取消停止，否则转一下屏幕闹钟就不响了。
-2. **重复投递会留下第二条无人持有的铃声**。`onStartCommand` 可能被投递多次
-   （精确通道与 +3 分钟保险通道先后触发），而旧实现每次都 `new Ringtone` 覆盖字段，
-   前一个再也没人 `stop()`。现在 `startRinging()` **无条件先停掉上一条**，
-   并且同一条待办的重复投递直接跳过。
+| 停止动作 | 旧实现的漏洞 | 用户看到的现象 |
+|---|---|---|
+| 关掉闹钟页（返回键 / 划掉） | 页面停自己那条 + 解绑服务（600ms 宽限） | 基本可用 |
+| 通知里的「完成 / 稍后」 | 只停服务那条（`muteNow` + `stopService`），**页面自己补响的那条没人停**，页面也不关 | 点了「完成」界面还留着并且一直在响 |
+| 页面被划到后台（上滑回桌面） | 页面没销毁 → 什么都不停 | 看不到界面却一直响，只能等兜底超时 |
+| 服务被系统限制没能启动 | `muteNow` 里 `live == null`、`stopService` 无事可做 | 同上 |
+| 闹钟页拉不起来（后台启动界面被拦） | 响铃常驻通知**没有停止按钮**且不可划掉 | 只能听着响满 5 分钟 |
 
-另外两个保险：
+现在的结构：
 
-* 通知里的「完成 / 稍后提醒」跑在广播接收器里，拿不到绑定句柄，而 `stopService`
-  对**已被页面绑定**的服务不会立刻停铃——所以额外提供了同进程的 `AlarmRingService.muteNow()`，
-  先立刻静音再停服务。
-* 响铃最长 5 分钟（`MAX_RING_MS`）后自动停止，避免异常路径下一直响。
+* **铃声只有一个持有者**：`AlarmRinger`（`notify/AlarmRinger.kt`）。服务与页面都只是
+  「启动者」，无论是谁把声音放出来的，任何停止入口都直接调它，不再有分支判断。
+  它自带超时兜底（`MAX_RING_MS`），所以「一直响」在物理上不可能超过 5 分钟——
+  页面侧原先**没有任何超时**，这是最难查的一块。
+* **停止也只有一个出口**：`AlarmRingService.stopEverything(context, todoId)`
+  = 静音 + 关掉闹钟页（`AlarmActivity.finishLive()`）+ 撤掉常驻通知 + 退出服务。
+  「完成 / 稍后 / 停止 / 关页面」四条路径都调它。若正在响的其实是**另一条**待办
+  （新闹钟刚起来、页面还没收到 `onNewIntent`），它只撤本待办的通知，不碰对方的铃声与通知。
+* **响铃通知自带「停止」「完成」按钮**，并且 `setDeleteIntent` 也指向「停止」：
+  真机上闹钟页有可能根本拉不起来（厂商限制后台启动界面），这时通知就是唯一的交互面。
+* **闹钟页的每一种离开方式都有对应回调**：`onUserLeaveHint`（上滑回桌面 / 切应用）、
+  `onDestroy`（返回键 / 划掉 / 被回收）、`onStop` 之后 15 秒的看门狗
+  （屏幕亮着却看不见页面 → 判定用户已经走了）。看门狗刻意加了「屏幕亮着」这个条件：
+  按电源键熄屏同样会走 `onStop`，那属于「闹钟还在响，只是屏幕黑了」，必须继续响。
+* **新闹钟复用同一个页面实例**（`singleInstance` + `CLEAR_TOP`）时会走 `onNewIntent`，
+  否则会出现「标题还是上一条，响的却是新闹钟」——这是「关不掉」的另一种版本。
 
 验证方式（模拟器/真机均可复现）：
 
@@ -337,17 +352,68 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'
 & $adb shell am broadcast -a com.avalonyin1120.todolist.debug.SEED_TODO `
     -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.debug.DebugSeedReceiver `
     -e name 闹钟关闭验证 --el trigger_in_seconds 12 --ez alarm true
-# 等响铃页弹出来之后（不要点任何按钮）按返回键
-& $adb shell input keyevent 4
+
+# 路径 1：返回键      → input keyevent 4
+# 路径 2：上滑回桌面  → input keyevent 3
+# 路径 3：通知「停止」→ am broadcast -a com.avalonyin1120.todolist.action.STOP_ALARM_RING `
+#                        -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.notify.ReminderActionReceiver
+# 路径 4：通知「完成」→ am broadcast -a com.avalonyin1120.todolist.action.REMINDER_DONE `
+#                        -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.notify.ReminderActionReceiver `
+#                        --el extra_todo_id <id>
 & $adb logcat -d -s TodoAlarm
-# 期望看到：闹钟开始响铃 → 闹钟页已关闭，停止响铃并退出服务 → 闹钟停止响铃
-& $adb shell dumpsys activity services com.avalonyin1120.todolist   # 不应再有 AlarmRingService
+# 期望：闹钟开始响铃 →（对应路径的日志）→ 闹钟停止响铃，且不再有 AlarmRingService
+& $adb shell dumpsys activity services com.avalonyin1120.todolist
 ```
 
-实测（API 35 模拟器）：绑定关系在 `dumpsys activity services` 里能看到
-`ConnectionRecord ... CR com.avalonyin1120.todolist/.notify.AlarmRingService`；
-按返回键后日志顺序为「闹钟页已关闭，停止响铃并退出服务」→「闹钟停止响铃」，
-服务记录消失。
+实测结果见 §4.7。
+
+---
+
+### 4.7 四条停止路径的实测记录（API 35 模拟器）
+
+脚本：`发布\验证脚本_闹钟停止.ps1`（工作区）——造一条 8 秒后触发的闹钟式提醒，
+等到开始响铃，施加对应动作，再读 `logcat -s TodoAlarm` 与
+`dumpsys activity services` / `dumpsys window`。
+
+| 路径 | 日志 | 结论 |
+|---|---|---|
+| 返回键关页面 | `闹钟开始响铃：todo=21` → `闹钟停止响铃：todo=21` | 服务消失 |
+| 上滑回桌面 | `闹钟开始响铃：todo=18` → `用户主动离开闹钟页，结束本次闹钟` → `闹钟停止响铃：todo=18` | 服务消失 |
+| 通知「停止」 | `闹钟开始响铃：todo=19` → `闹钟停止响铃：todo=19` | 服务消失 |
+| 通知「完成」 | `闹钟开始响铃：todo=20` → `闹钟停止响铃：todo=20` | 服务消失 |
+
+声音本身也做了验证（不只是状态字段）：响铃期间 `dumpsys audio` 里能看到
+
+```
+AudioPlaybackConfiguration piid:631 type:android.media.MediaPlayer u/pid:10216/6298
+  state:started attr: usage=USAGE_ALARM content=CONTENT_TYPE_SONIFICATION
+```
+
+即**真的有一个 MediaPlayer 在 USAGE_ALARM 通道上播放**；执行「停止」后该播放器消失。
+另外日志里能看到 `同一条待办的重复投递，继续沿用当前铃声`，
+说明「服务与页面同时起铃」不会变成两声或断一下。
+
+#### 实测中查明的两个系统限制（决定了闹钟页什么时候能出现）
+
+跑脚本时遇到过「明明到点响铃了，闹钟页却没弹出来」。查 `logcat` 才看清：
+
+1. **前台服务在后台不能拉起界面。**
+   ```
+   E ActivityTaskManager: Background activity launch blocked!
+     callingUidProcState: FOREGROUND_SERVICE; callingUidHasAnyVisibleWindow: false ... BAL_BLOCK
+   ```
+   屏幕亮着、用户正在用别的应用时，`AlarmRingService` 里那句 `startActivity` 会被系统拦掉。
+   此时**只有通知**（响铃通知现在自带「停止」「完成」，见 §4.6）。
+2. **Android 14+ 会收回全屏 Intent。** 非闹钟/通话类应用用过一次全屏 Intent 之后，
+   系统把 `USE_FULL_SCREEN_INTENT` 标记为拒绝（`appops get ... USE_FULL_SCREEN_INTENT`
+   会显示 `default; rejectTime=...`），后续提醒降级成横幅通知。
+   只有在**屏幕关闭/锁屏**时发的全屏 Intent 才会真正拉起闹钟页（这正是系统闹钟的行为），
+   而且是用户手动在 设置 → 通知 → 全屏提醒 里允许之后。
+
+所以这张表的路径 1/2 是「应用前台或锁屏时页面已经显示」的情形；
+「页面根本拉不起来」时，出口是响铃通知上的两个按钮——那条路径也单独测了（表里的路径 3/4
+就是在页面未出现、`ring-only` 的状态下完成的）。这两条限制**不是本应用能绕过的**，
+应用能做的都做了：通知给按钮、检查页给开关入口（§5.4 第 4 条）。
 
 ---
 
@@ -404,9 +470,13 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
 `提醒可靠性检查` 页会逐项检查并给出入口，ColorOS 需要额外打开：
 
 1. 设置 → 应用管理 → 待办提醒 → **允许自启动**
-2. 同页 → 电池 → **允许后台活动 / 不优化**
+2. 同页 → 电池 → **允许后台活动 / 不优化**（应用内「检查」页会打开系统的电池优化列表页；
+   本应用**不申请** `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 权限，因为它违反 Google Play 政策，
+   详见 §7.9）
 3. 同页 → 权限管理 → 通知 → 允许**锁屏显示 / 允许打扰**
-4. 通知权限、精确闹钟、全屏提醒（Android 14+）分别由对应卡片引导开启
+4. **设置 → 通知 → 待办提醒 → 全屏提醒（允许）**：Android 14+ 起这是闹钟页能否自动弹出的
+   决定性开关，非闹钟类应用的全屏 Intent 会被系统收回（§4.7 第 2 条）。应用内「检查」页有
+   对应卡片和跳转按钮；不开也能用，但到点只会出现横幅通知（铃声照常响、通知上可停止/完成）
 
 小米/华为/荣耀/vivo 的对应路径也写在该页的「国产 ROM 需要额外设置」卡片里。
 **自启动没开时，系统会直接拦截广播拉起应用，闹钟登记了也不会响——这不是 App 能绕过的。**
@@ -423,7 +493,14 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
 - **通知方式的延迟由系统决定**，国产 ROM 省电策略可能延迟很久甚至杀掉任务，
   这是系统行为而非代码缺陷；需要准时请选闹钟式。
 - **闹钟式需要精确闹钟权限**（Android 12+ 默认关闭），设置页与顶部横幅都提供入口。
-- **全屏 Intent 的显示受系统策略约束**：部分厂商 ROM 需要额外允许「后台弹出界面」。
+- **闹钟页能不能自动弹出来由系统决定**：Android 10+ 禁止后台的前台服务直接拉起界面
+  （实测 `Background activity launch blocked!`），Android 14+ 又会收回非闹钟类应用的
+  全屏 Intent。屏幕关闭/锁屏 + 用户允许「全屏提醒」时才会像系统闹钟那样整屏弹出；
+  否则只有横幅通知（铃声照常响，通知上有「停止 / 完成」）。详见 §4.7。
+- **迟到的启动指令会被忽略 60 秒**：Android 12+ 可能把「后台启动前台服务」推迟十几秒，
+  实测出现过「用户已经关掉闹钟页，`onStartCommand` 才到」。这种迟到的启动如果照常起铃，
+  用户就会看到「明明关掉了，过一会儿又响」。因此同一条待办在停止后 60 秒内不再起铃，
+  这个窗口远小于最短的真实重复提醒间隔（稍后提醒 10 分钟），不会吞掉下一次提醒。
 - **数据库当前 v5，已移除 `fallbackToDestructiveMigration`**：从 1.0.0 起用户数据就是真实资产，
   **任何 schema 变更都必须配一条 `Migration`**（忘写会在升级时直接抛异常，开发期立刻暴露，
   而不是悄悄清空用户数据）。本版本把包名从 `com.example.todolist` 改成了
@@ -463,11 +540,32 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
    `com.android.tools.lint:lint-gradle:31.9.2` 不在离线缓存里，Google Maven 也拉不动
    （在线解析长时间无响应），于是 release 构建直接失败。已在 `app/build.gradle.kts` 里
    `lint { checkReleaseBuilds = false }` 关掉构建期检查，发布前请在有网环境手动跑
-   `.\gradlew :app:lint`。
+   `.\gradlew :app:lint`。**后来联网跑通了一次**（见 §7.9、§7.10），
+   连它一起抓出了两个会让 release 直接失败的检查项——所以这一步不要省。
 8. **改包名比想象中碎**：`namespace` / `applicationId`、四个源码集的目录、
    `app/schemas/<包名>.data.local.TodoDatabase/` 的目录名、以及所有 `import` 与
    文档里的 adb 命令都要一起改。Kotlin 不强制目录与包名一致，所以漏搬目录**不会**
    编译报错，只会让源码树变得莫名其妙——改完请 `Get-ChildItem -Recurse -Directory` 核一遍。
+9. **`java.time` 里有些方法 minSdk 26 用不了，而只跑 API 35 根本测不出来**：
+   `LocalDate.ofInstant` 要 API 34（Android 官方 API 数据库里写的是 `since="34"`），
+   本项目 minSdk 26，Android 8~13 上会直接 `NoSuchMethodError`——而它会出现在
+   `TodoViewModel` 的初始化里，也就是**一打开应用就崩**。
+   单测跑在 Robolectric 35、模拟器也是 API 35，两边都发现不了；
+   是 `.\gradlew :app:lint` 的 `NewApi` 检查把它标成 release 阻断错误的。
+   遇到 `java.time` 的可疑方法，先查 `<sdk>/platforms/android-35/data/api-versions.xml`
+   里的 `since=`；替换成 `Instant.atZone(zone).toLocalDate()` 这类 API 26 就有的写法。
+10. **`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 会被 lint 判为违反 Play 政策**
+    （`BatteryLife`），Google Play 也曾因此拒绝过应用。本应用的做法是不声明该权限，
+    改为打开系统的电池优化列表页让用户自己设（`ReminderHealth.openBatteryOptimizationSettings`）；
+    读取「是否已豁免」用的是 `PowerManager.isIgnoringBatteryOptimizations`，**不需要权限**。
+11. **实现了 `Configuration.Provider` 还要把库自带的初始化器删掉**：否则 WorkManager
+    在进程启动时就用默认配置初始化了一次，我们那份配置被静默忽略——lint 的
+    `RemoveWorkManagerInitializer` 会直接报错。修法是在清单里用
+    `tools:node="merge"` + meta-data `tools:node="remove"` 摘掉（见 `AndroidManifest.xml`）；
+    摘完务必真机/模拟器验一次 `dumpsys jobscheduler` 里还有 WorkManager 的 job（§5.3）。
+12. **本机的 `pwsh` 其实是 Windows PowerShell 5.1**：它按 ANSI 代码页读取**没有 BOM** 的
+   `.ps1`，中文注释会变成乱码并触发一堆「意外的标记」语法错误。
+   写脚本时统一存成 **UTF-8 with BOM**（`tools/*.ps1` 同理）。
 
 ---
 
@@ -492,7 +590,7 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
 | 模拟器冷启动 | 约 60s+ | **约 20s** |
 | 应用冷启动（`am start -W` TotalTime） | — | **2.27s** |
 | 一次完整 instrumented 测试（构建+安装+30 个用例） | 2–3 分钟 | **约 45–60s** |
-| 完整单测（244 用例 / 15 类） | 曾卡住 20 分钟以上 | **约 5–10s** |
+| 完整单测（260 用例 / 16 类） | 曾卡住 20 分钟以上 | **约 10–35s** |
 | release APK 体积（R8 + 资源压缩） | — | **1.4 MB**（debug 包 17.1 MB） |
 
 单测变快还有两个代码层面的原因：给测试 JVM 加了堆（`-Xmx2048m`），
@@ -538,35 +636,40 @@ adb shell setprop debug.todo.anim_ms 0
 
 ---
 
-## 10. 发布清单（v1.0.0 还差什么）
+## 10. 发布清单（v1.0.0）
 
-本版本（v17）已经把下面这些做完了：
+### 10.1 已完成
 
-| 项 | 状态 | 说明 |
+| 项 | 状态 | 说明 / 证据 |
 |---|---|---|
-| 包名 | ✅ | `com.avalonyin1120.todolist`（原 `com.example.todolist`）。对 Play 而言是**全新应用**，旧测试包仍留在测试机上，建议卸载 |
-| 版本号 | ✅ | `versionCode = 1`、`versionName = "1.0.0-rc1"`（`app/build.gradle.kts`）；设置 → 版本号 里显示的就是这两个值 |
-| release 签名 | ✅ | `release/keystore.properties` + `release/todolist-release.jks`（**均不进版本库**）。keystore 口令在 properties 里，请连同 jks 一起备份——丢了就再也无法给同一个应用发包 |
-| R8 + 资源压缩 | ✅ | release 包 1.4 MB（debug 17.1 MB）；`app/proguard-rules.pro` 里逐条写清了为什么需要那条规则 |
-| 数据库迁移策略 | ✅ | 去掉 `fallbackToDestructiveMigration`，改成显式的 `MIGRATIONS` 数组（当前为空，因为包名变更 = 全新安装） |
-| debug 专用组件不导出 | ✅ | `DebugAlarmReceiver` / `DebugSeedReceiver` 只存在于 `src/debug/AndroidManifest.xml`，release 清单里根本没有它们；`ReminderAlarmReceiver`、`ReminderActionReceiver`、`AlarmRingService`、`AlarmActivity` 均为 `exported="false"`。已用 `aapt2 dump xmltree --file AndroidManifest.xml app-release.apk` 逐条核对 |
+| 包名 | ✅ | `com.avalonyin1120.todolist`（原 `com.example.todolist`）。对 Play 而言是**全新应用**；旧测试包留在测试机上，建议卸载 |
+| 版本号 | ✅ | `versionCode = 1`、`versionName = "1.0.0"`；`aapt2 dump badging` 实测产物里就是这两个值 |
+| release 签名 | ✅ | `release/keystore.properties` + `release/todolist-release.jks`（**均不进版本库**）；`apksigner verify` 实测 v2 + v3 已签名，DN `CN=Avalon-Yin1120`，指纹 `3226B61F…33A6`。口令与 jks 必须离线备份两处以上 |
+| R8 + 资源压缩 | ✅ | release 包 **1.397 MB**（debug 16.3 MB）；`app/proguard-rules.pro` 逐条写了为什么需要那条规则 |
+| 数据库迁移策略 | ✅ | 去掉 `fallbackToDestructiveMigration`，改成显式 `MIGRATIONS` 数组（当前为空：包名变更 = 全新安装）。加迁移的步骤写在 `TodoDatabase.MIGRATIONS` 注释里 |
+| 权限最小化 | ✅ | release 清单只有 8 个自有权限 + WorkManager 自动声明的 `ACCESS_NETWORK_STATE`；**没有 `INTERNET`**、**没有 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`**（后者会被 Play 判违规，见 §7.10） |
+| `USE_EXACT_ALARM` | ✅ 决定**不声明** | 它能让应用自动获得精确闹钟权限，但 Play 只允许「闹钟/日历」类应用声明；现在靠「检查页 + 横幅」引导用户手动授权 |
+| debug 专用组件不导出 | ✅ | `DebugAlarmReceiver` / `DebugSeedReceiver` 只在 `src/debug/AndroidManifest.xml`，release 清单里根本没有；其余组件 `exported="false"`，已用 `aapt2 dump xmltree` 逐条核对 |
+| lint | ✅ **0 error** | 联网跑通 `.\gradlew :app:lint`，它抓出两个**会导致 release 不可用**的问题：`LocalDate.ofInstant` 要 API 34（§7.9）、WorkManager 初始化器未被移除（§7.11）。均已修复；余下为 warning（未用字符串资源、`ObsoleteSdkInt`、`UseKtx` 等），逐类复核后接受 |
+| 上架产物 | ✅ | `assembleRelease` → `app-release.apk`（1.397 MB）、`bundleRelease` → `app-release.aab`（3.38 MB） |
+| release 包实测 | ✅ | 装到 API 35 模拟器：正常启动、无异常日志；新增待办后列表显示「通知」方式（v17 的默认值生效）；`dumpsys alarm` 里有 `action.FIRE_REMINDER`、`dumpsys jobscheduler` 里有 WorkManager 的 job（说明去掉默认初始化器后按需初始化仍正常，§7.11）；版本页显示 `1.0.0（1）· 正式构建` |
+| 应用图标 | ✅ | 自适应图标（品牌色 `#4F46E5` + 勾选图形）+ **Android 13 主题图标单色层**；商店用 512×512 PNG 由同一份矢量源渲染（`发布\图标\`） |
+| 隐私政策 / 商店文案 | ✅ | `发布\隐私政策.md`、`发布\应用商店文案.md`（含一句话简介、短/长描述、更新日志、关键词、分级建议、素材清单） |
+| 闹钟「关不掉」 | ✅ | 铃声改为单一持有者 + 单一停止出口 + 通知上的「停止/完成」+ 迟到启动抑制；四条停止路径实测见 §4.6/§4.7 |
 
-> 顺带复核了「隐私」页的说法：release 包的权限清单里**确实没有 `INTERNET`**，
-> 只有 `ACCESS_NETWORK_STATE`（WorkManager 自己声明的，不授予联网能力），
-> 所以「没有把数据发出去的能力」这句话是站得住的。
-| `USE_EXACT_ALARM` | ✅ 已决定**不声明** | 它会自动获得精确闹钟权限，但 Google Play 只允许「闹钟/日历」类应用声明，上架有被驳回风险；现在靠「检查页 + 横幅」引导用户手动授权 |
-| release 包实测 | ✅ | 装到 API 35 模拟器上：能启动、能新增待办、**提醒确实排进了 AlarmManager**（混淆没有破坏 Room / WorkManager / 闹钟链路）、版本页显示 `1.0.0-rc1（1）· 正式构建` |
+### 10.2 发布前还要做的
 
-发布时还要做的：
-
-1. ⬜ `versionName` 从 `1.0.0-rc1` 改成 `1.0.0`；**之后每次发版把 `versionCode` 加一**
-   （Play 不接受相同或更小的 versionCode）。
-2. ⬜ 在有网环境跑 `.\gradlew :app:lint` 看完整检查报告（本机离线缓存缺 `lint-gradle`，
-   构建期检查已关，见 §7.7）。
-3. ⬜ 生成上架产物：`.\gradlew bundleRelease` → `app/build/outputs/bundle/release/app-release.aab`。
-4. ⬜ 商店素材：图标（现在还是默认启动图标）、截图、隐私政策链接
-   （「设置 → 隐私」那一页的内容可以直接整理成政策文本）。
-5. ⬜ 真机回归：至少在一台 ColorOS / 一台类原生上验证「后台 + 熄屏 + 杀进程」三场景，
-   以及 §5.4 列出的那几个必须由用户手动打开的开关。
-6. ⬜ 确认 `release/` 目录已备份（keystore + properties）。**这一步没做就不要发包**：
+1. ⬜ **真机回归**（唯一无法在模拟器完成的）：至少一台 ColorOS、一台类原生，验证
+   「后台 + 熄屏 + 杀进程」三场景，以及 §5.4 的四个开关（尤其 Android 14+ 的**全屏提醒**）。
+2. ⬜ **商店截图**：1080×1920（9:16）或 1080×2340，至少 4 张，覆盖
+   列表页 / 新增表单 / 日视图 / 周视图 / 设置页（当前 `发布\图标\` 有图标，截图待补）。
+3. ⬜ **隐私政策托管地址**：`发布\隐私政策.md` 里的生效日期与 URL 是占位符，
+   上传到可访问的网页（GitHub Pages / 仓库 README 均可）后回填，并同步到商店后台。
+4. ⬜ **Play 后台声明**：`FOREGROUND_SERVICE_SPECIAL_USE`（用途：闹钟响铃期间的常驻服务）
+   与 `USE_FULL_SCREEN_INTENT`（用途：锁屏上弹出提醒页）在 Play Console 需要填写用途说明；
+   应用宝/华为/小米/OPPO 等商店要求类似。
+5. ⬜ **`release/` 目录已离线备份**（keystore + properties）。**这一步没做就不要发包**：
    Play 不接受更换签名的更新，丢了只能换包名重新上架。
+6. ⬜ 发版流程记牢：改 `versionCode`（+1）与 `versionName` → 跑 `:app:testDebugUnitTest`
+   + `:app:connectedDebugAndroidTest` + `:app:lint` → `assembleRelease` + `bundleRelease`
+   → 存档产物与变更说明。

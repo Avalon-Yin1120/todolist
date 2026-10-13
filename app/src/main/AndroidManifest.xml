@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 发送提醒通知（Android 13+ 需要运行时授予） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -14,8 +15,14 @@
     <!-- 提醒时振动 -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 闹钟式提醒的前台服务：保证到点响铃、亮屏并弹出提醒页 -->
-    <!-- 请求加入电池优化白名单：否则厂商省电策略会让到点提醒不响或晚很久 -->
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!--
+      刻意不声明 REQUEST_IGNORE_BATTERY_OPTIMIZATIONS：
+      它能让应用直接弹出「是否允许后台运行」的系统确认框，但 Google Play 的内容政策
+      不允许普通应用申请它（Android 自带的 lint 有专门一条 BatteryLife 检查会因此报
+      「violates the Play Store Content Policy」）。改为打开系统的电池优化列表页，
+      由用户把本应用设为「不优化」，功能一样、上架无风险；
+      读取「是否已豁免」本来就不需要权限，所以界面上的状态判断照旧准确。
+    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
@@ -83,6 +90,26 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="alarm_ringing" />
         </service>
+
+        <!--
+          WorkManager 的「按需初始化」：本应用实现了 Configuration.Provider
+          （见 TodoApp.workManagerConfiguration），但 WorkManager 库自带的
+          androidx.startup 初始化器仍会在进程启动时用**默认配置**抢先初始化一次，
+          我们那份配置就被静默忽略——lint 为此直接报错
+          （RemoveWorkManagerInitializer）。把这条 meta-data 移除后，
+          WorkManager 会在第一次 getInstance(context) 时才按我们的配置初始化，
+          顺带也让冷启动少一次初始化。
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

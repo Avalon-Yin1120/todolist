@@ -313,7 +313,8 @@ class TodoViewModelTest {
     fun `进入视图时带的是今天而不是锚点日`() = runTest(testDispatcher) {
         settle()
         val state = viewModel.uiState.value
-        val today = java.time.LocalDate.ofInstant(java.time.Instant.ofEpochMilli(now), TestData.ZONE)
+        // 与生产代码保持一致：不用 API 34 才有的 LocalDate.ofInstant（minSdk 26）
+        val today = java.time.Instant.ofEpochMilli(now).atZone(TestData.ZONE).toLocalDate()
         assertThat(state.tab).isEqualTo(NavTab.DAY)
         assertThat(state.selectedDate).isEqualTo(today)
         // 首帧应当没有待处理的跳转请求，pager 直接以「今天」为初始页
