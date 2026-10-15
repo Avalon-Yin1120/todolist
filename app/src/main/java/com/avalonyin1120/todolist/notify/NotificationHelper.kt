@@ -49,8 +49,9 @@ open class NotificationHelper(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
 
-        // 旧版本建的渠道声音不可改，留着只会在系统设置里显示成「静音」的迷惑项
-        runCatching { manager.deleteNotificationChannel(LEGACY_CHANNEL_ID) }
+        // 历史渠道一律删掉：渠道的「声音」创建后不可改，留着只会变成迷惑项
+        // （它们要么根本没声音，要么是用户手机上那条永远静音的 v2）。
+        LEGACY_CHANNEL_IDS.forEach { runCatching { manager.deleteNotificationChannel(it) } }
 
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(soundChannel())
@@ -58,7 +59,26 @@ open class NotificationHelper(
         if (manager.getNotificationChannel(CHANNEL_ID_SILENT) == null) {
             manager.createNotificationChannel(silentChannel())
         }
+        Log.i(
+            TAG,
+            "通知渠道就绪：$CHANNEL_ID 声音=${manager.getNotificationChannel(CHANNEL_ID)?.sound}" +
+                " 重要性=${manager.getNotificationChannel(CHANNEL_ID)?.importance}",
+        )
     }
+
+    /**
+     * 有声渠道用的提示音。
+     *
+     * 优先系统默认提示音；**取不到就退回打包在应用里的音频**。
+     *
+     * 这条兜底是用户真机反馈换来的：部分 ROM 上 `RingtoneManager.getDefaultUri(TYPE_NOTIFICATION)`
+     * 返回 null，于是渠道被建成「没有声音」——而渠道声音**创建后不可更改**，
+     * 那条渠道就永远是静音的，用户看到的现象是「到点只弹通知、不响」。
+     * 用自带的音频就不依赖系统提示音是否存在了。
+     */
+    private fun notificationSoundUri(): android.net.Uri =
+        android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+            ?: android.net.Uri.parse("android.resource://${context.packageName}/${R.raw.alarm_beep}")
 
     /** 有声渠道：显式给提示音，避免部分 ROM 建出「静音」渠道。 */
     private fun soundChannel(): NotificationChannel =
@@ -74,9 +94,7 @@ open class NotificationHelper(
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             setBypassDnd(true)
             setSound(
-                android.media.RingtoneManager.getDefaultUri(
-                    android.media.RingtoneManager.TYPE_NOTIFICATION,
-                ),
+                notificationSoundUri(),
                 android.media.AudioAttributes.Builder()
                     .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -150,7 +168,7 @@ open class NotificationHelper(
             // 通知本身也带全屏 Intent 作为兜底（锁屏时系统会直接拉起闹钟页），
             // 但真正保证「响铃 + 亮屏 + 弹页」的是 AlarmRingService：
             // 屏幕亮着时系统不会用全屏 Intent 拉起界面，只给一条横幅。
-            builder.setFullScreenIntent(fullScreenIntent(todo.id), true)
+            builder.setFullScreenIntent(fullScreenIntent(todo), true)
             builder.setDefaults(NotificationCompat.DEFAULT_ALL)
         }
 
@@ -186,7 +204,7 @@ open class NotificationHelper(
      */
     private fun startRingService(todo: Todo) {
         try {
-            AlarmRingService.start(context, todo.id, todo.name)
+            AlarmRingService.start(context, todo.id, todo.name, todo.updatedAt)
             Log.i(TAG, "已请求启动闹钟响铃服务：todo=${todo.id}")
         } catch (e: Exception) {
             Log.e(
@@ -205,6 +223,7 @@ open class NotificationHelper(
                         Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS,
                 )
                 putExtra(com.avalonyin1120.todolist.ui.alarm.AlarmActivity.EXTRA_TODO_ID, todo.id)
+                putExtra(com.avalonyin1120.todolist.ui.alarm.AlarmActivity.EXTRA_ALARM_ID, todo.updatedAt)
             }
             runCatching { context.startActivity(alarmIntent) }
                 .onSuccess { Log.i(TAG, "已改为直接拉起闹钟页：todo=${todo.id}") }
@@ -234,11 +253,14 @@ open class NotificationHelper(
     }
 
     /** 全屏 Intent：让系统直接把闹钟页拉到前台（锁屏上也生效）。 */
-    private fun fullScreenIntent(todoId: Long): PendingIntent {
+    private fun fullScreenIntent(todo: Todo): PendingIntent {
+        val todoId = todo.id
         val intent = Intent(context, com.avalonyin1120.todolist.ui.alarm.AlarmActivity::class.java).apply {
             action = com.avalonyin1120.todolist.ui.alarm.AlarmActivity.ACTION_SHOW_ALARM
             data = android.net.Uri.parse("todolist://alarm/$todoId")
             putExtra(com.avalonyin1120.todolist.ui.alarm.AlarmActivity.EXTRA_TODO_ID, todoId)
+            // 闹钟身份（updatedAt）：让「迟到投递」与「编辑后的新闹钟」可区分，见 AlarmRinger
+            putExtra(com.avalonyin1120.todolist.ui.alarm.AlarmActivity.EXTRA_ALARM_ID, todo.updatedAt)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
                 Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
@@ -263,17 +285,23 @@ open class NotificationHelper(
         /**
          * 有声提醒渠道。
          *
-         * 注意 id 里的 `v2`：早先版本用 `todo_reminder` 建过渠道且**没有声音**，
-         * 而渠道创建后声音不可更改，老用户手机上那条渠道永远是静音的。
-         * 换一个新的 id 才能在老设备上真正拿到「响一下」的效果。
+         * 注意 id 里的 `v3`：这个后缀是**被迫**加上的，因为通知渠道的声音**创建后不可更改**。
+         * 历史上有两代渠道都因此废掉：
+         * * `todo_reminder`（最早）：建的时候就没给声音，永远是静音；
+         * * `todo_reminder_v2`：虽然显式给了声音，但真机反馈「到点只弹通知、不响」——
+         *   查下去是部分 ROM 上 `RingtoneManager.getDefaultUri(TYPE_NOTIFICATION)` 返回 null，
+         *   渠道被建成了「无声音」；而且它一旦这么建出来，应用再也改不动。
+         *
+         * v3 用 [notificationSoundUri]：系统提示音取不到就退回自带音频，因此不会再建出无声渠道。
+         * 旧的两代渠道在 [ensureChannel] 里一并删除，免得系统设置里堆一串同名项。
          */
-        const val CHANNEL_ID = "todo_reminder_v2"
+        const val CHANNEL_ID = "todo_reminder_v3"
 
         /** 静音提醒渠道：用户关掉「通知提示音」后走这条。 */
-        const val CHANNEL_ID_SILENT = "todo_reminder_silent_v2"
+        const val CHANNEL_ID_SILENT = "todo_reminder_silent_v3"
 
-        /** 老版本留下的残留渠道，启动时清掉。 */
-        const val LEGACY_CHANNEL_ID = "todo_reminder"
+        /** 历史版本留下的残留渠道，启动时清掉（声音改不了，只能弃用换新 id）。 */
+        val LEGACY_CHANNEL_IDS = listOf("todo_reminder", "todo_reminder_v2", "todo_reminder_silent_v2")
 
         const val ACTION_OPEN_TODO = "com.avalonyin1120.todolist.action.OPEN_TODO"
 

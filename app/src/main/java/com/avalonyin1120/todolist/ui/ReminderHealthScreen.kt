@@ -111,6 +111,9 @@ fun ReminderHealthScreen(
         // 通知样式整体算**一项**（不是每条渠道各算一项）：横幅数字要让人一眼看懂
         // 「还有几件事要做」，渠道内部的静默/横幅/锁屏在展开区里逐条列
         channelOk,
+        // 「后台弹出界面」**故意不计入**：系统没有 API 能读到那个厂商开关的真实状态，
+        // 把它算成缺项就等于凭猜测报一个恒定的数字（而且永远是缺的），那是谎报。
+        // 它只作为「到点没弹提醒页时按路径自查」的引导，摆在列表里。
     ).count { !it }
 
     Scaffold(
@@ -183,6 +186,8 @@ fun ReminderHealthScreen(
                     append("把所有类别的「静默通知」都关掉，并打开「锁屏」与「横幅」通知。")
                     append("否则提醒可能不出声、不飘出来，或者锁屏上什么都看不到。")
                     append("（渠道一旦创建，声音与重要性只能由你在系统设置里改，应用读得到、改不了。）")
+                    append("括号里是应用从系统读到的原始值，只作排查参考：")
+                    append("「静默」只按重要性判定（importance ≤ 2 才算静默），读不到声音不等于静默。")
                 },
                 actionLabel = "去设置",
                 tag = TAG_HEALTH_CHANNELS,
@@ -197,10 +202,13 @@ fun ReminderHealthScreen(
                     text = "当前提醒走的是「${activeChannel?.title ?: "渠道尚未创建"}」" +
                         when {
                             activeChannel == null -> "。"
-                            // 关掉应用内提示音后，静音渠道被判为静默是**预期**的，
-                            // 不能反过来让用户去「关掉静默通知」（那条渠道本来就不出声）
+                            // 关掉应用内提示音后，提醒走的是应用自建的那条静音渠道：
+                            // 「会不会出声」本来就不该是问题（那条渠道注定不出声），因此这里只检查横幅与锁屏
                             !soundEnabled -> "。你已关闭「通知提示音」，因此这里只检查横幅与锁屏。"
-                            activeChannel.silent -> "，它现在被判为静默通知，不会出声。"
+                            activeChannel.silent ->
+                                "，它现在被判为静默通知" +
+                                    "（importance=${activeChannel.importance}，系统会把它当静默处理），" +
+                                    "不会出声。"
                             else -> "。各条类别（渠道）的现状："
                         },
                     style = MaterialTheme.typography.bodySmall,
@@ -215,6 +223,14 @@ fun ReminderHealthScreen(
                         onFix = { ReminderHealth.openChannelSettings(context, channel.id) },
                     )
                 }
+                Text(
+                    text = "括号里是从系统读回的原始值（importance：0=这条渠道被关掉、1~2=会静默、" +
+                        "3=默认、4=高、5=最高）。声音与振动只是信息，不参与「是否静默」的判定——" +
+                        "部分 ROM（如 ColorOS）即使渠道有声音也会读成「读不到」，" +
+                        "拿它当条件就会误报。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
 
             HealthItem(
@@ -252,14 +268,46 @@ fun ReminderHealthScreen(
                 onSecondary = { ReminderHealth.openAppDetailsSettings(context) },
             )
 
+            // 「后台弹出界面」不判定状态，只做引导：
+            // * `ok = true` 是**中性展示**（卡片用普通底色、不计入顶部缺项数），不是「它已经开了」——
+            //   系统没有任何 API 能读这个厂商开关，判了就是猜；右上角因此用 statusOverride
+            //   显示「需人工确认」而不是「已开启」；
+            // * `primaryAlwaysVisible = true`：正因为不判定状态，「去设置」必须始终可点
+            //   （否则 ok = true 会把主按钮藏起来，这一项就废了）。
+            HealthItem(
+                ok = true,
+                statusOverride = "需人工确认",
+                primaryAlwaysVisible = true,
+                title = "后台弹出界面（ColorOS 等）",
+                why = "部分 ROM（ColorOS / MIUI）默认禁止应用在后台弹出界面：提醒到点时应用不在前台，" +
+                    "系统与厂商各拦一层（Android 10+ 的「后台启动界面」限制 + 厂商的这道开关），" +
+                    "闹钟页就弹不出来——表现就是「到点了什么都没发生」，而铃声/通知可能已经正常触发。" +
+                    "这一项读不到真实状态（没有公开 API），所以这里不判定，只给入口，请自己按路径确认：" +
+                    "ColorOS：设置 → 应用管理 → 待办提醒 → 权限管理 → 其他权限 / 特殊应用权限 → " +
+                    "打开「后台弹出界面」；MIUI：设置 → 应用设置 → 待办提醒 → 权限管理 → 其他权限 → " +
+                    "打开「后台弹出界面」。按钮会尽量直达厂商的「权限管理 / 特殊应用权限」页，" +
+                    "本机没有这些页面时退到应用详情页，从那里也能走到权限管理。",
+                actionLabel = "去设置",
+                tag = TAG_HEALTH_BACKGROUND_POPUP,
+                onAction = { ReminderHealth.openBackgroundPopupSettings(context) },
+                secondaryLabel = "打开应用详情页",
+                onSecondary = { ReminderHealth.openAppDetailsSettings(context) },
+            )
+
             HealthItem(
                 ok = fullScreenIntentAllowed || !alarmModeInUse,
-                title = "全屏提醒（Android 14+）",
+                // 标题用系统里的开关名（「发送全屏通知」）：用户要照着名字在设置里找，
+                // 「全屏提醒」是我们自己的叫法，用户在系统里搜不到。
+                title = "发送全屏通知（Android 14+）",
                 why = if (!alarmModeInUse) {
-                    "当前用的是通知方式，不需要这一项；改用闹钟式后会需要它。"
+                    "当前用的是通知方式，不需要这一项；改用闹钟式后会需要它。" +
+                        "（系统里这个开关叫「发送全屏通知」。）"
                 } else {
                     "Android 14 起，系统可能把闹钟的整屏提醒降级成一条横幅通知，" +
-                        "也就是「不弹页面、只在状态栏出现」。"
+                        "也就是「不弹页面、只在状态栏出现」；系统里这个开关叫「发送全屏通知」。" +
+                        "类原生：设置 → 应用 → 待办提醒 → 通知 → 发送全屏通知；" +
+                        "ColorOS 也可能在 设置 → 应用管理 → 待办提醒 → 权限管理 → " +
+                        "其他权限 / 特殊应用权限 下。"
                 },
                 actionLabel = "去允许",
                 tag = TAG_HEALTH_FULL_SCREEN,
@@ -287,6 +335,12 @@ fun ReminderHealthScreen(
  *
  * `body` 是可选展开区：用来放「这一项下面还有几条子项要逐条处理」的内容
  * （目前只有通知样式用它列渠道）。
+ *
+ * 两个为「读不到状态」的项准备的参数（例如「后台弹出界面」）：
+ * * [statusOverride]：替掉右上角默认的「已开启 / 未开启」。系统里读不到真实状态时，
+ *   写「需人工确认」这种中性词——**不要用默认文案谎报一个状态**；
+ * * [primaryAlwaysVisible]：强制露出主按钮。默认规则是「未开启才显示主操作」，
+ *   而这类项目 `ok = true`（中性展示），不强制的话「去设置」会被藏起来，那一项就废了。
  */
 @Composable
 private fun HealthItem(
@@ -300,6 +354,8 @@ private fun HealthItem(
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null,
     secondaryTag: String? = null,
+    statusOverride: String? = null,
+    primaryAlwaysVisible: Boolean = false,
     body: (@Composable () -> Unit)? = null,
 ) {
     Card(
@@ -339,7 +395,7 @@ private fun HealthItem(
                 )
                 Spacer(Modifier.padding(horizontal = 4.dp))
                 Text(
-                    text = if (ok) "已开启" else "未开启",
+                    text = statusOverride ?: if (ok) "已开启" else "未开启",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -356,7 +412,9 @@ private fun HealthItem(
             ActionRow(
                 // 未开启才把主操作摆出来；已开启时只留「次级入口」（例如系统设置、应用详情页），
                 // 这样卡片不会因为按钮太多而看不出「还差什么」。
-                showPrimary = !ok && enabled,
+                // 例外是 [primaryAlwaysVisible]：状态读不到的引导项没有「未开启」这个时机，
+                // 必须一直可点。
+                showPrimary = enabled && (primaryAlwaysVisible || !ok),
                 actionLabel = actionLabel,
                 onAction = onAction,
                 secondaryLabel = secondaryLabel,
@@ -397,6 +455,10 @@ private fun ActionRow(
  * 为什么要把三条状态各自写出来、再各配一个「去设置」：系统通知设置里
  * 「静默通知」「横幅」「锁屏」是**逐渠道**的开关，只给一个总入口的话，
  * 用户点进去还要自己找是哪一条；这里直接把要改的那条渠道摊开。
+ *
+ * 末尾括号里是**应用读到的原始值**（[ReminderHealth.ChannelHealth.rawValuesText]）。
+ * 它是排查用的，不是判定条件：真机上出现过「系统里静默明明关着，API 却读不到声音」的误报，
+ * 只有把原始读数摆出来，用户截图反馈时我们才有据可查（详见 ReminderHealth 的注释）。
  */
 @Composable
 private fun ChannelRow(
@@ -436,6 +498,8 @@ private fun ChannelRow(
                     append(if (health.banners) "✓ 有横幅" else "✗ 无横幅（要打开）")
                     append("　")
                     append(if (health.lockscreen) "✓ 锁屏可见" else "✗ 锁屏不可见（要打开）")
+                    // 原始值原样带出，不做解释也不参与判定（见上面的函数注释）
+                    append("（${health.rawValuesText()}）")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -474,8 +538,12 @@ private fun OemGuideCard(onOpenAppDetails: () -> Unit) {
             Text(
                 text = "OPPO / 一加 / realme（ColorOS）：设置 → 应用管理 → 本应用 → " +
                     "① 允许自启动 ② 耗电管理 → 允许完全后台行为（不优化）" +
-                    "③ 权限管理 → 通知 → 允许打扰/锁屏显示。\n" +
-                    "小米（MIUI/澎湃）：设置 → 应用设置 → 本应用 → 自启动 + 省电策略“无限制”。\n" +
+                    "③ 权限管理 → 通知 → 允许打扰/锁屏显示 " +
+                    "④ 权限管理 → 其他权限 / 特殊应用权限 → 打开「后台弹出界面」" +
+                    "（不开它，到点了闹钟页弹不出来）与「发送全屏通知」" +
+                    "（Android 14+，不开它锁屏只出一条横幅）。\n" +
+                    "小米（MIUI/澎湃）：设置 → 应用设置 → 本应用 → 自启动 + 省电策略“无限制”" +
+                    "+ 权限管理 → 其他权限 → 后台弹出界面。\n" +
                     "华为 / 荣耀：设置 → 应用启动管理 → 本应用 → 手动管理，三个开关全开。\n" +
                     "vivo（OriginOS）：设置 → 电池 → 后台高耗电 → 允许本应用。",
                 style = MaterialTheme.typography.bodySmall,
@@ -511,3 +579,12 @@ const val TAG_HEALTH_CHANNEL_FIX_PREFIX = "health_channel_fix_"
 
 /** 「打开通知设置（全部类别）」的标签。 */
 const val TAG_HEALTH_NOTIF_SETTINGS = "health_notif_settings"
+
+/**
+ * 「后台弹出界面（ColorOS 等）」引导项的标签。
+ *
+ * 这一项**读不到状态**、因此不参与缺项计数，只作为引导存在（见 `HealthItem` 的
+ * `statusOverride` / `primaryAlwaysVisible`）。标签单独定义，是为了将来 UI 测试能钉住
+ * 「它始终可点、且不谎报状态」这件事。
+ */
+const val TAG_HEALTH_BACKGROUND_POPUP = "health_background_popup"

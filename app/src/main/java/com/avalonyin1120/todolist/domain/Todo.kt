@@ -10,10 +10,13 @@ package com.avalonyin1120.todolist.domain
  * @param recurrence 周期规则；[Recurrence.NONE] 表示一次性待办
  * @param weekDays 周重复选中的星期几；为空时回落到开始日期所在的星期
  * @param monthDays 月重复选中的几号；为空时回落到开始日期的号数
- * @param recurrenceExceptions 重复规则的例外日期（跳过或被单独改过的场次）
+ * @param recurrenceExceptions 重复规则的例外日期：跳过的场次、被单独改过的场次、
+ *   以及被单独标记完成的场次（周期待办的完成状态按场次记在这里，见 [RecurrenceExceptionKind]）
  * @param parentId 由「仅修改本次」生成的独立待办会指向原重复待办的 id，便于溯源
  * @param remindedOccurrenceStart 已经提醒过的那一场的开始时间；用于避免重复提醒
  *   （周期待办不能只用一个布尔标记，必须记住是哪一场提醒过了）
+ * @param isDone 整条待办的完成状态。**只对一次性待办有意义**：周期待办按场次完成，
+ *   这个字段不再参与完成状态的判定（周期性数据里遗留的 true 会被忽略）
  */
 data class Todo(
     val id: Long = 0L,

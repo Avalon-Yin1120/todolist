@@ -125,15 +125,71 @@ class SchedulingCoordinator(
         scheduleFor(fresh)
     }
 
-    /** 切换完成状态；标记完成时撤销未触发的提醒，取消完成时按需重排。 */
-    suspend fun setDone(todoId: Long, done: Boolean) {
+    /**
+     * 切换完成状态。
+     *
+     * 一次性待办：照旧用整条的 `isDone`，标记完成时撤销未触发的提醒，取消完成时按需重排。
+     *
+     * 周期待办：完成是**按场次**的（见 [setOccurrenceDone]），因此这里只做转发：
+     * 不传 [occurrenceStart] 的调用方（通知里的「完成」、闹钟页的「完成」）拿不到场次，
+     * 落到这条待办「刚提醒过的那一场」——那正是它们要完成的那一场。
+     */
+    suspend fun setDone(todoId: Long, done: Boolean, occurrenceStart: Long? = null) {
         val todo = repository.findById(todoId) ?: return
+        if (todo.recurrence.isRecurring) {
+            setOccurrenceDone(
+                todoId = todoId,
+                occurrenceStart = occurrenceStart ?: todo.remindedOccurrenceStart ?: todo.startAt,
+                done = done,
+            )
+            return
+        }
         val updated = todo.copy(isDone = done, updatedAt = clock.now())
         cancelSchedules(todoId)
         repository.update(updated)
         if (!done) {
             scheduleFor(updated)
         }
+    }
+
+    /**
+     * 只把周期待办的**某一场**标记为完成（或取消完成）：在该日期上加/去一条
+     * [RecurrenceExceptionKind.COMPLETED] 例外。
+     *
+     * 为什么不改 `isDone`：`isDone` 是整条待办的状态，而周期待办展开时每一场都会
+     * 继承它，于是「勾今天这一场」会让明天、后天的场次一起显示已完成——这正是用户报的
+     * 「周期待办打勾后其它场次也变已完成」。改成例外之后，完成状态天然是按场次的。
+     *
+     * 重排只重排**这一条待办的下一次提醒**（调度器按待办 id 覆盖，同一时刻只有一场在排），
+     * 因此完成的这一场不再提醒、后续场次照常；不能走「取消了就不再排」那条路，
+     * 否则整个周期会一起哑掉。
+     */
+    suspend fun setOccurrenceDone(todoId: Long, occurrenceStart: Long, done: Boolean) {
+        val todo = repository.findById(todoId) ?: return
+        // 非周期待办只有一个「场次」，直接落到整条的 isDone 上，语义不变
+        if (!todo.recurrence.isRecurring) {
+            setDone(todoId, done)
+            return
+        }
+        val dateKey = RecurrenceExpander.dateKeyOf(occurrenceStart, zone)
+        // 只动这一天的 COMPLETED，其它例外（SKIPPED / OVERRIDDEN）原样保留：
+        // 「删除本次」「仅修改本次」的既有行为不能被完成/取消完成碰坏
+        val others = todo.recurrenceExceptions.filterNot {
+            it.date == dateKey && it.kind == RecurrenceExceptionKind.COMPLETED
+        }
+        val next = if (done) {
+            others + RecurrenceException(dateKey, RecurrenceExceptionKind.COMPLETED)
+        } else {
+            others
+        }
+        // 状态没变化（例如对着同一个状态连点两次）就不写库，省掉一次无效的取消 + 重排
+        if (next == todo.recurrenceExceptions) return
+
+        val updated = todo.copy(recurrenceExceptions = next, updatedAt = clock.now())
+        cancelSchedules(todoId)
+        repository.update(updated)
+        val fresh = repository.findById(todoId) ?: return
+        scheduleFor(fresh)
     }
 
     /**
@@ -147,6 +203,10 @@ class SchedulingCoordinator(
         }
         return scheduled
     }
+
+    /** [occurrenceStart] 那一场是否已被标记完成（用本类的时区解析场次日期）。 */
+    fun isOccurrenceCompleted(todo: Todo, occurrenceStart: Long): Boolean =
+        RecurrenceExpander.isOccurrenceCompleted(todo, occurrenceStart, zone)
 
     // ------------------------------------------------------------------ 查询
 
@@ -220,11 +280,16 @@ class SchedulingCoordinator(
      * 允许「迟到」[MISSED_GRACE_MS]：提醒时刻刚过去不久（例如系统深度休眠、
      * 或被厂商省电策略冻结而没投递）时仍然返回这一场，系统会立刻补投一次。
      * 超过宽限期就不再补发，避免装上新版本后被历史事项刷屏。
+     *
+     * 周期待办会跳过**已完成的那一场**（按场次完成，见 [setOccurrenceDone]）：
+     * 勾掉今天这一场之后，排的下一条就是明天那一场。
      */
     suspend fun nextOccurrenceToRemind(todo: Todo, now: Long): Long? {
         // 「不通知」根本没有提醒时刻，放在最前面挡掉：宽限期与周期展开都不必参与
         if (todo.mode == ReminderMode.NONE) return null
-        if (todo.isDone) return null
+        // isDone 只对一次性待办有意义。周期待办的完成按场次记在例外列表里，
+        // 整条记录上遗留的 true（旧版本打勾时写进去的）不该让整个系列从此不再提醒。
+        if (todo.isDone && !todo.recurrence.isRecurring) return null
         val graceStart = now - MISSED_GRACE_MS
 
         if (!todo.recurrence.isRecurring) {
@@ -234,13 +299,15 @@ class SchedulingCoordinator(
             return todo.startAt.takeIf { triggerAt > graceStart }
         }
 
-        // 周期待办：逐场向前找第一个「还没提醒过且提醒时刻仍在（宽限期内）未来」的场次
+        // 周期待办：逐场向前找第一个「还没提醒过、还没完成、且提醒时刻仍在（宽限期内）未来」的场次
         var searchAfter = graceStart
         repeat(MAX_OCCURRENCE_LOOKAHEAD) {
             val occurrence = RecurrenceExpander.nextOccurrenceAfter(todo, searchAfter, zone)
                 ?: return null
             val triggerAt = occurrence - todo.leadMinutes * MILLIS_PER_MINUTE
-            if (todo.remindedOccurrenceStart != occurrence && triggerAt > graceStart) return occurrence
+            val alreadyReminded = todo.remindedOccurrenceStart == occurrence
+            val completed = RecurrenceExpander.isOccurrenceCompleted(todo, occurrence, zone)
+            if (!alreadyReminded && !completed && triggerAt > graceStart) return occurrence
             searchAfter = occurrence
         }
         return null
@@ -311,11 +378,16 @@ class ReminderFiringService(
 
     override suspend fun fire(todoId: Long, occurrenceStart: Long) {
         val todo = coordinator.findById(todoId) ?: return
-        if (todo.isDone) return
+        // isDone 只对一次性待办有意义：周期待办的完成按场次记，整条记录上遗留的 true
+        // 如果在这里也照挡，就会出现「排定了却永远不响」的哑火
+        if (todo.isDone && !todo.recurrence.isRecurring) return
         // 提醒已经排出去之后，用户才把它改成「不通知」时，可能还剩一条在途的触发
         //（广播已投递、Worker 已开跑），取消调度来不及拦住它。这里再挡一次，
         // 否则用户明明关掉了提醒却仍然收到通知——这正是「不通知」最不能出的错。
         if (todo.mode == ReminderMode.NONE) return
+        // 这一场已经被勾掉了（提前完成，或通知还挂着时用户已经在列表里完成）：
+        // 不能提醒。也不需要在这里补一次重排——完成那一步已经 scheduleFor 把下一场排好了。
+        if (coordinator.isOccurrenceCompleted(todo, occurrenceStart)) return
         // 必须先判断「这一场是否已经提醒过」，再去标记与重排。
         // 若顺序颠倒，第二次触发会先被重新排定，导致同一场次重复提醒。
         if (todo.remindedOccurrenceStart == occurrenceStart) return

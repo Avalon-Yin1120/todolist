@@ -184,17 +184,7 @@ class TodoViewModel(
             needsOemBackgroundGuide = oemBackgroundGuideNeeded(),
             settings = readSettings(),
             version = versionInfo ?: VersionInfo.of(application),
-            // 「今天」必须取自注入的时钟/时区，而不是系统时钟：
-            // 否则测试里 FakeClock 的日期和界面认的日期会不一致，
-            // 日历首帧就会落到错误的页上。
-            //
-            // 这里刻意不用 `LocalDate.ofInstant(...)`：那个方法要 API 34，而本应用
-            // minSdk 26 —— lint 的 NewApi 检查把它标成了 release 阻断错误
-            // （在 Android 8~13 上会直接 NoSuchMethodError 崩溃，只在 API 35 模拟器上
-            //   测不出来）。`Instant.atZone(zone).toLocalDate()` 从 API 26 起就有。
-            selectedDate = java.time.Instant.ofEpochMilli(clock.now())
-                .atZone(zone)
-                .toLocalDate(),
+            selectedDate = today(),
         )
     )
 
@@ -248,9 +238,56 @@ class TodoViewModel(
     /** 当前时区。 */
     fun zone(): ZoneId = zone
 
+    /**
+     * 「今天」，按注入的时钟与时区算。
+     *
+     * 必须取自注入的时钟/时区，而不是系统时钟：否则测试里 FakeClock 的日期和界面认的日期
+     * 会不一致，日历首帧就会落到错误的页上。
+     *
+     * 这里刻意不用 `LocalDate.ofInstant(...)`：那个方法要 API 34，而本应用 minSdk 26 ——
+     * lint 的 NewApi 检查把它标成了 release 阻断错误（在 Android 8~13 上会直接
+     * NoSuchMethodError 崩溃，只在 API 35 模拟器上测不出来）。
+     * `Instant.atZone(zone).toLocalDate()` 从 API 26 起就有。
+     */
+    private fun today(): LocalDate =
+        java.time.Instant.ofEpochMilli(clock.now())
+            .atZone(zone)
+            .toLocalDate()
+
     // ---------------------------------------------------------------- 导航
 
-    fun selectTab(tab: NavTab) = updateLocal { it.copy(tab = tab) }
+    /**
+     * 点底部视图。
+     *
+     * 「日 / 周 / 月视图」不停在刚才在翻的那一期，而是直接回到**本天 / 本周 / 本月**
+     * （今天 / 本周一 / 本月 1 号），做法与界面上的「回到今天 / 回到本周 / 回到本月」按钮
+     * 保持一致，不另写一套：
+     * * 日期用同一套软写入规则（[withSoftDate]）落回目标期；
+     * * [TodoUiState.jumpRequest] 自增一次 —— pager 只认这个信号（外加 tab 变化）才滚过去，
+     *   而翻页后的回写走 [selectDateSoft]、不自增，所以左右滑动不会被「自动跳回今天」打断。
+     *
+     * 边界一：已经在看的那一期再点同一个视图**也**回到本期。这样底部四个按钮是一条规则
+     * （「点日/周/月视图 = 看该视图下的现在」），并且让「滑远了再点一下日视图」成为回到
+     * 今天的顺手入口（否则同一颗按钮有时跳、有时静默不生效，更让人困惑）。代价是这一次
+     * 会丢掉正在浏览的日期，但那是用户明确再点了一次**已经选中**的按钮，而同一屏顶部的
+     * 「回到今天」按钮随时可用、不会离开当前视图。
+     *
+     * 边界二：目标是按 [today] 现算的，绝不从 [TodoUiState.selectedDate] 推。
+     * 月视图里 selectedDate 可能是「某个月的 1 号」（pager 上报的代表日），也可能是
+     * 「用户真正关心的那一天」（软写入保留下来的今天）——两种都可能存在，所以
+     * 「切到日视图看哪一天」只认今天，1 号永远不会漏进日视图；而这层歧义在切到月视图时
+     * 由 [withSoftDate] 处理：同期内更具体的那一天不被粗粒度的代表日覆盖（见该函数注释）。
+     *
+     * 「待办」不是日期视图：只切 tab，不动日期、也不发跳转请求。
+     */
+    fun selectTab(tab: NavTab) = updateLocal { local ->
+        if (tab == NavTab.TODO) {
+            local.copy(tab = tab)
+        } else {
+            local.copy(tab = tab, jumpRequest = local.jumpRequest + 1)
+                .withSoftDate(tab, periodStart(tab, today()))
+        }
+    }
 
     /** 点某一天：跳到日视图。同时发一次跳转请求，让日历滚到那一天。 */
     fun selectDate(date: LocalDate) = updateLocal {
@@ -268,17 +305,32 @@ class TodoViewModel(
      * * 上层显式给的某一天（例如「回到今天」把日期落回今天）——照收，
      *   否则月视图里存着 1 号时会把「今天」挡掉，切回日视图就永远停在 1 号。
      */
-    fun selectDateSoft(date: LocalDate) = updateLocal { local ->
-        val keepFinerDate = isPeriodAnchor(local.tab, date) &&
-            samePeriodAs(local.tab, local.selectedDate, date)
-        if (keepFinerDate) local else local.copy(selectedDate = date)
+    fun selectDateSoft(date: LocalDate) = updateLocal { it.withSoftDate(it.tab, date) }
+
+    /**
+     * 按 [tab] 的粒度把日期软写入 [target]：该收则收，该留则留。
+     *
+     * [target] 是「这一期的代表日」（周=周一、月=1 号）时粒度比用户实际在看的日期粗：
+     * 如果当前 selectedDate 本来就在同一期里，就保留它（连同「几号」），
+     * 这样月视图里的「今天」不会被 pager 上报的 1 号顶掉；
+     * 上层显式给的更具体的某一天（「回到今天」把日期落回今天）以及别的期的代表日则照收，
+     * 否则月视图里存着 1 号时会把「今天」挡掉，切回日视图就永远停在 1 号。
+     */
+    private fun LocalState.withSoftDate(tab: NavTab, target: LocalDate): LocalState {
+        val keepFinerDate = isPeriodAnchor(tab, target) &&
+            samePeriodAs(tab, selectedDate, target)
+        return if (keepFinerDate) this else copy(selectedDate = target)
     }
 
     /** [date] 是否正好落在本粒度的期首（周=周一、月=1 号；日粒度下每天都是期首）。 */
-    private fun isPeriodAnchor(tab: NavTab, date: LocalDate): Boolean = when (tab) {
-        NavTab.WEEK -> CalendarLayout.weekStart(date) == date
-        NavTab.MONTH -> date.dayOfMonth == 1
-        else -> true
+    private fun isPeriodAnchor(tab: NavTab, date: LocalDate): Boolean =
+        periodStart(tab, date) == date
+
+    /** 日期在 [tab] 粒度下所属那一期的起点：日=本身、周=周一、月=1 号。 */
+    private fun periodStart(tab: NavTab, date: LocalDate): LocalDate = when (tab) {
+        NavTab.WEEK -> CalendarLayout.weekStart(date)
+        NavTab.MONTH -> date.withDayOfMonth(1)
+        else -> date
     }
 
     /** 两个日期是否属于同一期（同一周 / 同一月 / 同一天）。 */
@@ -331,6 +383,11 @@ class TodoViewModel(
             recurrence = todo.recurrence,
             weekDays = todo.weekDays,
             monthDays = todo.monthDays,
+            // 三个「重复范围」字段必须**全部**回填。曾经漏了 recurrenceStartDate，
+            // 结果是「编辑一次周期待办（选整个系列）就把生效起始日静默清空」——
+            // 而 TodoDraft 的相等判断含这个字段，于是连「已提醒」标记也会被一起清掉，
+            // 用户看到的就是「只是改了个名字，怎么又提醒了一次」。
+            recurrenceStartDate = todo.recurrenceStartDate,
             recurrenceEndDate = todo.recurrenceEndDate,
             recurrenceCount = todo.recurrenceCount,
         )
@@ -475,8 +532,26 @@ class TodoViewModel(
 
     fun dismissDialog() = updateLocal { it.copy(dialog = null) }
 
+    /**
+     * 打勾 / 取消打勾。
+     *
+     * 传入的 [todo] 就是界面上的「这一条」：日/周/月视图里它是展开出来的**当次场次**，
+     * 总列表里是 [com.avalonyin1120.todolist.domain.RecurrenceExpander.asListEntry] 给的
+     * 「起始日那一场」。周期待办因此总带着一个明确的场次开始时间，完成只落在这一场上，
+     * 不会牵动其它场次（整条的 `isDone` 也不再被改写——那正是「勾一场、全变已完成」的成因）。
+     */
     fun toggleDone(todo: Todo) {
-        viewModelScope.launch { coordinator.setDone(todo.id, !todo.isDone) }
+        viewModelScope.launch {
+            if (todo.recurrence.isRecurring) {
+                coordinator.setOccurrenceDone(
+                    todoId = todo.id,
+                    occurrenceStart = todo.startAt,
+                    done = !todo.isDone,
+                )
+            } else {
+                coordinator.setDone(todo.id, !todo.isDone)
+            }
+        }
     }
 
     // ---------------------------------------------------------------- 设置

@@ -281,6 +281,112 @@ class RecurrenceExpanderTest {
         assertThat(RecurrenceExpander.occursOn(todo, date(2026, 5, 13), zone)).isTrue()
     }
 
+    // ------------------------------------------------------------ 按场次完成
+
+    @Test
+    fun `完成的那一场仍然出现且只标记为已完成`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 10, 9),
+            endAt = at(2026, 5, 10, 9, 30),
+            recurrence = Recurrence.DAILY,
+            recurrenceExceptions = listOf(
+                RecurrenceException("2026-05-11", RecurrenceExceptionKind.COMPLETED)
+            ),
+        )
+
+        // 「完成」不是「消失」：这一场照样要出现（带删除线、勾选框为选中），
+        // 用户才看得见自己刚打完勾、也才能再点一次取消完成
+        assertThat(RecurrenceExpander.occursOn(todo, date(2026, 5, 11), zone)).isTrue()
+        val done = RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 11), zone)
+        assertThat(done.isDone).isTrue()
+        // 时间不受完成状态影响
+        assertThat(done.startAt).isEqualTo(at(2026, 5, 11, 9))
+        assertThat(done.endAt).isEqualTo(at(2026, 5, 11, 9, 30))
+
+        // 前后两场必须还是未完成
+        assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 10), zone).isDone).isFalse()
+        assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 12), zone).isDone).isFalse()
+    }
+
+    @Test
+    fun `整条记录的完成状态不参与场次判定`() {
+        // 旧版本「勾一场」会把整条 isDone 置为 true，于是展开出来的每一场都显示已完成
+        //（用户报的 bug）。现在场次的完成只看例外列表，整条上遗留的值被忽略。
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 10, 9),
+            endAt = at(2026, 5, 10, 9, 30),
+            recurrence = Recurrence.DAILY,
+            isDone = true,
+        )
+
+        assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 10), zone).isDone).isFalse()
+        assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 11), zone).isDone).isFalse()
+        assertThat(RecurrenceExpander.asListEntry(todo, zone).isDone).isFalse()
+    }
+
+    @Test
+    fun `跳过与仅改本次的例外仍然让该场不出现`() {
+        // 新增 COMPLETED 之后，「隐藏场次」只对 SKIPPED / OVERRIDDEN 生效：
+        // 「删除本次」「仅修改本次」的既有行为不能被它碰坏
+        listOf(
+            RecurrenceExceptionKind.SKIPPED,
+            RecurrenceExceptionKind.OVERRIDDEN,
+        ).forEach { kind ->
+            val todo = TestData.todo(
+                startAt = at(2026, 5, 10, 9),
+                endAt = at(2026, 5, 10, 9, 30),
+                recurrence = Recurrence.DAILY,
+                recurrenceExceptions = listOf(RecurrenceException("2026-05-11", kind)),
+            )
+
+            assertThat(RecurrenceExpander.occursOn(todo, date(2026, 5, 11), zone)).isFalse()
+        }
+    }
+
+    @Test
+    fun `完成状态按本地日期键查询`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 10, 9),
+            endAt = at(2026, 5, 10, 9, 30),
+            recurrence = Recurrence.DAILY,
+            recurrenceExceptions = listOf(
+                RecurrenceException("2026-05-11", RecurrenceExceptionKind.COMPLETED)
+            ),
+        )
+
+        assertThat(RecurrenceExpander.isCompleted(todo, date(2026, 5, 11))).isTrue()
+        assertThat(RecurrenceExpander.isCompleted(todo, date(2026, 5, 12))).isFalse()
+        // 调度侧只知道场次的开始时间，因此这条按「开始时间 → 本地日期」换算必须对
+        assertThat(
+            RecurrenceExpander.isOccurrenceCompleted(todo, at(2026, 5, 11, 9), zone)
+        ).isTrue()
+        assertThat(
+            RecurrenceExpander.isOccurrenceCompleted(todo, at(2026, 5, 12, 9), zone)
+        ).isFalse()
+    }
+
+    @Test
+    fun `列表条目取起始日那一场的完成状态`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 10, 9),
+            endAt = at(2026, 5, 10, 9, 30),
+            recurrence = Recurrence.DAILY,
+            recurrenceExceptions = listOf(
+                RecurrenceException("2026-05-10", RecurrenceExceptionKind.COMPLETED)
+            ),
+        )
+
+        val entry = RecurrenceExpander.asListEntry(todo, zone)
+        assertThat(entry.isDone).isTrue()
+        // 这一步只补完成状态，卡片上显示的起止时间不能被它改掉
+        assertThat(entry.startAt).isEqualTo(todo.startAt)
+        assertThat(entry.endAt).isEqualTo(todo.endAt)
+
+        // 一次性待办原样返回：它的完成状态本来就在整条记录上
+        val once = TestData.todo(startAt = at(2026, 5, 10, 9), isDone = true)
+        assertThat(RecurrenceExpander.asListEntry(once, zone)).isEqualTo(once)
+    }
+
     // ------------------------------------------------------------ 范围展开
 
     @Test

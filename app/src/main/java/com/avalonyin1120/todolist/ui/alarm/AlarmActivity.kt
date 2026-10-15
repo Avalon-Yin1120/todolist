@@ -96,6 +96,14 @@ class AlarmActivity : ComponentActivity() {
     /** 当前展示的待办；`onNewIntent` 时会被改写（新闹钟复用同一个实例）。 */
     private var todoId by mutableLongStateOf(AlarmRinger.NO_TODO)
 
+    /**
+     * 本次闹钟的「身份」= 待办的 `updatedAt`。
+     *
+     * 它只用来让「迟到的重复投递」与「用户编辑过之后的新闹钟」区分开：
+     * 前者要被抑制窗口挡掉，后者必须照响（用户真机上遇到过「编辑提醒时间后不响」）。
+     */
+    private var alarmId = AlarmRinger.NO_TODO
+
     /** 页面是否可见。看门狗靠它判断「是否真的离开了」。 */
     private var visible = false
 
@@ -154,6 +162,7 @@ class AlarmActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         todoId = intent.getLongExtra(EXTRA_TODO_ID, AlarmRinger.NO_TODO)
+        alarmId = intent.getLongExtra(EXTRA_ALARM_ID, AlarmRinger.NO_TODO)
 
         // 与响铃服务绑定（服务不存在时由系统按需创建）：
         // 页面一销毁就解绑，服务侧靠解绑事件退出——「关门即静音」的最后一道保险。
@@ -172,7 +181,7 @@ class AlarmActivity : ComponentActivity() {
         //   被系统推迟了十几秒）→ 本页接管这条铃声。
         // 最后那种情况如果不处理，页面标题是新闹钟、响的却是旧闹钟，用户一关页面就变成
         // 「界面关了还在响」——正是最难查的一类。
-        AlarmRinger.start(this, todoId)
+        AlarmRinger.start(this, todoId, alarmId)
 
         live = WeakReference(this)
 
@@ -204,8 +213,9 @@ class AlarmActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         todoId = intent.getLongExtra(EXTRA_TODO_ID, AlarmRinger.NO_TODO)
+        alarmId = intent.getLongExtra(EXTRA_ALARM_ID, AlarmRinger.NO_TODO)
         // 本页现在展示新闹钟了，铃声也归它
-        AlarmRinger.start(this, todoId)
+        AlarmRinger.start(this, todoId, alarmId)
     }
 
     override fun onStart() {
@@ -310,13 +320,18 @@ class AlarmActivity : ComponentActivity() {
             val todo = graph.coordinator.findById(todoId) ?: return@launch
             val now = System.currentTimeMillis()
             val target = now + minutes * 60_000L
+            // 场次身份必须是**刚响过的那一场**，不能用 todo.startAt：
+            // 对周期待办来说 startAt 是「第一场」，而 fire() 会用
+            // 「这一场是否已经提醒过」把它挡掉——结果就是闹钟页点了「稍后提醒」什么都不发生。
+            // 刚响过的那一场记在 remindedOccurrenceStart 里；还没提醒过时才退回 startAt。
+            val occurrence = todo.remindedOccurrenceStart.takeIf { it != 0L } ?: todo.startAt
             // 用同样的提醒方式再排一次：把提醒时刻显式表达为「目标时间」
             graph.coordinator.exactScheduler.schedule(
                 com.avalonyin1120.todolist.domain.ReminderPlan(
                     todoId = todo.id,
                     triggerAt = target,
                     strategy = com.avalonyin1120.todolist.domain.ReminderStrategy.EXACT_ALARM,
-                    occurrenceStart = todo.startAt,
+                    occurrenceStart = occurrence,
                 )
             )
         }
@@ -325,6 +340,8 @@ class AlarmActivity : ComponentActivity() {
     private fun complete(todoId: Long) {
         val graph = (application as? TodoApp)?.graphOrNull() ?: return
         TodoApp.scope.launch {
+            // 不传 occurrenceStart：协调器的 setDone 会自己回落到「刚提醒过的那一场」
+            // （remindedOccurrenceStart），因此周期待办只完成这一场，不会把整个系列标完成。
             graph.coordinator.setDone(todoId, done = true)
             graph.notificationHelper.cancel(todoId)
         }
@@ -333,6 +350,9 @@ class AlarmActivity : ComponentActivity() {
     companion object {
         const val ACTION_SHOW_ALARM = "com.avalonyin1120.todolist.action.SHOW_ALARM"
         const val EXTRA_TODO_ID = "extra_todo_id"
+
+        /** 本次闹钟的身份（待办的 `updatedAt`），见 [AlarmRinger.wasRecentlyStopped]。 */
+        const val EXTRA_ALARM_ID = "extra_alarm_id"
 
         /** 日志标签，与 [AlarmRingService.TAG] 配合过滤「闹钟起停」全过程。 */
         const val TAG = "TodoAlarm"

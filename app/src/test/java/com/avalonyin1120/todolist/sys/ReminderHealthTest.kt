@@ -19,13 +19,21 @@ import org.robolectric.RobolectricTestRunner
  * 为什么值得单独测：这一段的判定结果是界面 `ok` 与顶部横幅计数的**唯一依据**，
  * 判错了就会出现两种反向的坏结果——明明静默却显示「已开启」（用户以为没事，
  * 到点不响），或者正常渠道被误判（用户被引导去改一个本来没问题的开关）。
+ * 后者不是假设：Android 15 / ColorOS 真机上，「待办提醒（有声）」的静默通知明明关着，
+ * 旧实现（`importance <= LOW || sound == null`）却因为它读不到声音而判成静默，
+ * 界面因此永远显示「未开启」。本类现在把这个误报钉成回归保护。
  *
  * 渠道的读行为与真机一致（Robolectric 用的就是系统那套 NotificationManager），
  * 但有一处**真机与测试的关键差异**必须写下来，否则很容易写出假绿/假红的用例：
  * 重新 `createNotificationChannel` 一个已存在的渠道时，系统只应用你**显式设置**过的字段，
  * 没设的字段保持原样（这正是「渠道一旦创建，声音与重要性就改不了」的底层原因）。
- * 因此「模拟用户把渠道改成静默」只能改重要性；声音那一路在测试里改不动，
- * 由 `静音渠道被判为静默` 用一条真实的无声音渠道来覆盖。
+ * 更强的一条（本类里实测确认过）：**声音一旦有过就再也去不掉**——
+ * 把一个曾经有声音的渠道 `deleteNotificationChannel` 之后再新建同名渠道并 `setSound(null, null)`，
+ * 读回来仍然是有声音的那条；而从来没设过声音的 id 无论建几次都读回 null。
+ * 后果是本类里 `CHANNEL_ID`（`NotificationHelper` 建它时就给了默认提示音）**永远读得到声音**，
+ * `CHANNEL_ID_SILENT` 永远读不到。也就是说，真机误报的那种形态
+ * 「有声渠道却读不到声音」在测试里**造不出来**；本类改用应用自己那条「高重要性 + 读不到声音」
+ * 的渠道来钉住同一条判定规则（对判定而言两者完全等价：`importance == HIGH && sound == null`）。
  */
 @RunWith(RobolectricTestRunner::class)
 class ReminderHealthTest {
@@ -77,22 +85,73 @@ class ReminderHealthTest {
         assertThat(health.silent).isFalse()
         assertThat(health.banners).isTrue()
         assertThat(health.lockscreen).isTrue()
+        // 原始值要如实带出来（真机排查用）：重要性照抄系统，声音/振动只作信息
+        val stored = manager.getNotificationChannel(NotificationHelper.CHANNEL_ID)
+        assertThat(health.importance).isEqualTo(stored.importance)
+        assertThat(health.hasSound).isEqualTo(stored.sound != null)
+        assertThat(health.vibrates).isEqualTo(stored.shouldVibrate())
     }
 
+    /**
+     * 真机误报的回归保护（Android 15 / ColorOS）。
+     *
+     * 用户手机上那条「待办提醒（有声）」渠道：系统通知设置里**静默通知是关的**，
+     * 但 `getSound()` 读回 null（创建渠道时传的默认提示音 URI 在该 ROM 上解析不到，
+     * 系统响铃时用的是它自己的音源）。旧判定 `importance <= LOW || sound == null` 因此把它判成静默，
+     * 界面永远显示「未开启」、还让用户去关一个已经关掉的开关——那是**用户怎么改都不会变绿**的死循环。
+     *
+     * 测试里造不出「有声渠道读不到声音」（见类注释：声音一旦有过就去不掉），
+     * 所以这里用应用自建的那条**同样的读数**（`importance == HIGH && sound == null`）来钉住规则：
+     * 旧实现在这条渠道上会判成静默，新实现必须判「非静默」。
+     */
     @Test
-    fun `静音渠道被判为静默`() {
+    fun `高重要性但读不到声音不算静默`() {
         NotificationHelper(context, soundEnabled = { false }).ensureChannel()
+
+        // 先确认复现出了那种读数，否则这条用例会变成假绿
+        val stored = manager.getNotificationChannel(NotificationHelper.CHANNEL_ID_SILENT)
+        assertThat(stored.importance).isEqualTo(NotificationManager.IMPORTANCE_HIGH)
+        assertThat(stored.sound).isNull()
 
         val health = ReminderHealth.notificationChannelHealth(context)
             .single { it.id == NotificationHelper.CHANNEL_ID_SILENT }
 
-        // 这条渠道本来就是「不出声」的（高重要性 + 无声音），静默是它的预期状态：
-        // 判定必须能识别出「sound == null」，否则界面会把它当成正常的有声渠道
-        // ——只按重要性判定的实现就会在这里露馅（它的重要性也是 HIGH）。
-        assertThat(health.silent).isTrue()
-        // 但它仍然该弹横幅、该在锁屏上可见——关掉的只是声音，不是提醒本身
-        assertThat(health.banners).isTrue()
-        assertThat(health.lockscreen).isTrue()
+        // 新语义：静默只看重要性。高重要性 ⇒ 不算静默，哪怕声音读不到。
+        assertThat(health.silent).isFalse()
+        // 原始值如实带出，用户截图时能把这行读数带给我们
+        assertThat(health.importance).isEqualTo(NotificationManager.IMPORTANCE_HIGH)
+        assertThat(health.hasSound).isFalse()
+        assertThat(health.rawValuesText()).contains("importance=4")
+        assertThat(health.rawValuesText()).contains("声音=读不到")
+    }
+
+    @Test
+    fun `顶部横幅的渠道健康判定与检查页共用同一个静默判定`() {
+        // 顶部横幅的「还有 N 项没打开」用的是 activeChannelHealthy，检查页用的是同一个 silent 字段：
+        // 两处只要有一处判定不同，就会出现「页面里说已开启、横幅还说差一项」或者反过来。
+        NotificationHelper(context, soundEnabled = { true }).ensureChannel()
+        NotificationHelper(context, soundEnabled = { false }).ensureChannel()
+
+        // 1) 应用自建的静音渠道是「高重要性 + 读不到声音」：新语义下不算静默，
+        //    因此关掉提示音（提醒走这条渠道）时，横幅不该再喊缺项
+        assertThat(ReminderHealth.notificationChannelHealth(context)
+            .single { it.id == NotificationHelper.CHANNEL_ID_SILENT }.silent).isFalse()
+        assertThat(ReminderHealth.activeChannelHealthy(context, soundEnabled = false)).isTrue()
+
+        // 2) 模拟用户在系统里给「有声」渠道打开了「静默通知」（落成低重要性）：
+        //    检查页必须判静默，横幅必须同时判不合格——两处不能各说一套
+        manager.createNotificationChannel(
+            NotificationChannel(
+                NotificationHelper.CHANNEL_ID,
+                "待办提醒（有声）",
+                NotificationManager.IMPORTANCE_LOW,
+            ),
+        )
+        assertThat(ReminderHealth.notificationChannelHealth(context)
+            .single { it.id == NotificationHelper.CHANNEL_ID }.silent).isTrue()
+        assertThat(ReminderHealth.activeChannelHealthy(context, soundEnabled = true)).isFalse()
+        // 3) 但关掉应用内提示音时提醒走的是另一条渠道，不该被这条拖累（否则就是第二次误报）
+        assertThat(ReminderHealth.activeChannelHealthy(context, soundEnabled = false)).isTrue()
     }
 
     @Test
@@ -115,6 +174,8 @@ class ReminderHealthTest {
         assertThat(health.silent).isTrue()
         // 低重要性同时意味着系统不会再为它飘横幅：两个判定要各自独立地反映出来
         assertThat(health.banners).isFalse()
+        // 新语义下「静默」的判据就是重要性，原始值要与判定一致（否则界面上的括号会自相矛盾）
+        assertThat(health.importance).isEqualTo(NotificationManager.IMPORTANCE_LOW)
     }
 
     @Test
@@ -203,10 +264,15 @@ class ReminderHealthTest {
     fun `没有候选页面时跳转不会抛异常`() {
         // 模拟器/Robolectric 上那些厂商组件一个都不存在：这正是最容易崩的场景
         // （ActivityNotFoundException）。硬约束是「绝不因为厂商页面不存在而崩」，
-        // 因此这里把三个入口都点一遍，只要不抛异常就算通过。
+        // 因此这里把每个入口都点一遍，只要不抛异常就算通过。
         ReminderHealth.openBatteryOptimizationSettings(context)
         ReminderHealth.openChannelSettings(context, NotificationHelper.CHANNEL_ID)
         ReminderHealth.openAppDetailsSettings(context)
+        // ColorOS 的「后台弹出界面」引导：候选链里全是厂商组件，本机一个都不存在，
+        // 必须静默退到应用详情页（用户点「去设置」不能没反应，更不能崩）
+        ReminderHealth.openBackgroundPopupSettings(context)
+        // 「发送全屏通知」入口（Android 14+ 的 ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT）
+        ReminderHealth.openFullScreenIntentSettings(context)
     }
 
     @Test

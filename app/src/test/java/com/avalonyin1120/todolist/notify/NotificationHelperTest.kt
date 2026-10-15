@@ -96,19 +96,32 @@ class NotificationHelperTest {
 
     @Test
     fun `建渠道时会清掉旧版本留下的残留渠道`() {
-        // 模拟从老版本升级上来：旧渠道已经存在于系统里
-        manager.createNotificationChannel(
-            android.app.NotificationChannel(
-                NotificationHelper.LEGACY_CHANNEL_ID,
-                "待办提醒",
-                NotificationManager.IMPORTANCE_DEFAULT,
-            ),
-        )
-        assertThat(manager.getNotificationChannel(NotificationHelper.LEGACY_CHANNEL_ID)).isNotNull()
+        // 模拟从老版本升级上来：两代旧渠道都已经存在于系统里。
+        // 它们必须被删掉——渠道的声音创建后改不了，旧渠道要么天生静音、要么是用户手机上那条
+        // 永远不出声的 v2，留着只会在系统设置里变成让人困惑的同名项。
+        val legacyIds = NotificationHelper.LEGACY_CHANNEL_IDS
+        legacyIds.forEach { id ->
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(id, "待办提醒", NotificationManager.IMPORTANCE_DEFAULT),
+            )
+        }
+        legacyIds.forEach { assertThat(manager.getNotificationChannel(it)).isNotNull() }
 
         helper.ensureChannel()
 
-        assertThat(manager.getNotificationChannel(NotificationHelper.LEGACY_CHANNEL_ID)).isNull()
+        legacyIds.forEach { assertThat(manager.getNotificationChannel(it)).isNull() }
+    }
+
+    @Test
+    fun `有声渠道一定有声音（系统提示音取不到时用自带音频兜底）`() {
+        // 真机反馈的坑：某些 ROM 上 RingtoneManager.getDefaultUri(TYPE_NOTIFICATION) 返回 null，
+        // 渠道就被建成了「无声音」，而且创建后应用再也改不动它——用户看到的是「只弹通知不响」。
+        // 这条断言保证 v3 渠道在任何情况下都带声音。
+        helper.ensureChannel()
+
+        val channel = manager.getNotificationChannel(NotificationHelper.CHANNEL_ID)
+        assertThat(channel).isNotNull()
+        assertThat(channel.sound).isNotNull()
     }
 
     @Test

@@ -22,14 +22,21 @@ object RecurrenceExpander {
     fun dateKeyOf(epochMillis: Long, zone: ZoneId): String =
         Instant.ofEpochMilli(epochMillis).atZone(zone).toLocalDate().format(DATE_FORMATTER)
 
+    /** 把日期转成例外列表的键；与 [dateKeyOf] 同一套格式。 */
+    fun dateKeyOf(date: LocalDate): String = date.format(DATE_FORMATTER)
+
     /**
      * 判断某条待办是否在 [date] 这一天出现。
      *
      * 一次性待办只看开始日期是否等于该日；周期待办按其规则判断，
-     * 并且会跳过「被删除的那一次」。
+     * 并且会跳过「被删除 / 被单独改过的那一次」。
+     *
+     * 「已完成的那一次」**不跳过**：它仍然要显示出来（带删除线与选中的勾选框），
+     * 否则用户打完勾这一场就凭空消失了。
      */
     fun occursOn(todo: Todo, date: LocalDate, zone: ZoneId): Boolean {
-        if (todo.recurrenceExceptions.any { it.date == date.format(DATE_FORMATTER) }) {
+        val dateKey = dateKeyOf(date)
+        if (todo.recurrenceExceptions.any { it.date == dateKey && it.kind.hidesOccurrence }) {
             return false
         }
         val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
@@ -162,6 +169,9 @@ object RecurrenceExpander {
      *
      * 时间部分取自规则，日期换成 [date]；一次性待办直接返回自身。
      * 结束时间用「原始时长」推算，跨夏令时也不会算错。
+     *
+     * 周期待办的 `isDone` 由**这一场有没有完成例外**决定，而不是取整条记录的 `isDone`：
+     * 整条记录的完成状态对周期待办没有意义（那正是「勾一场、全变已完成」的成因）。
      */
     fun occurrenceOn(todo: Todo, date: LocalDate, zone: ZoneId): Todo {
         if (!todo.recurrence.isRecurring) return todo
@@ -173,8 +183,35 @@ object RecurrenceExpander {
         return todo.copy(
             startAt = occurrenceStart,
             endAt = occurrenceStart + duration,
+            isDone = isCompleted(todo, date),
         )
     }
+
+    /**
+     * 列表页展示用的「这一条」。
+     *
+     * 周期待办在总列表里只出现一次（列表展示的是规则，不是某一天），卡片上的日期时间
+     * 取的是规则自身的起始时间，所以完成状态也必须取**起始日那一场**：
+     * 取整条 `isDone` 会让所有场次一起变成已完成（用户报的 bug）；
+     * 取「今天那一场」又和卡片上显示的日期对不上——勾了看不到勾。
+     */
+    fun asListEntry(todo: Todo, zone: ZoneId): Todo {
+        if (!todo.recurrence.isRecurring) return todo
+        val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
+        return occurrenceOn(todo, startDate, zone)
+    }
+
+    /** [date] 这一场是否已被标记完成。 */
+    fun isCompleted(todo: Todo, date: LocalDate): Boolean {
+        val dateKey = dateKeyOf(date)
+        return todo.recurrenceExceptions.any {
+            it.date == dateKey && it.kind == RecurrenceExceptionKind.COMPLETED
+        }
+    }
+
+    /** [occurrenceStart] 那一场是否已被标记完成（供调度侧用开始时间定位场次）。 */
+    fun isOccurrenceCompleted(todo: Todo, occurrenceStart: Long, zone: ZoneId): Boolean =
+        isCompleted(todo, Instant.ofEpochMilli(occurrenceStart).atZone(zone).toLocalDate())
 
     /**
      * 展开某个日期范围内所有出现的待办（含周期场次），按开始时间升序。

@@ -158,6 +158,32 @@ class TodoRepositoryTest {
     }
 
     @Test
+    fun `完成例外存进同一个字段并读回`() = runTest {
+        // 「完成本次」走的是已有的例外日期字段（`日期:枚举名`），因此只是多了一种枚举值：
+        // 不动表结构、不动数据库版本，老库不需要迁移
+        val id = repository.insert(
+            newTodo(name = "每天晨会").copy(
+                recurrence = Recurrence.DAILY,
+                recurrenceExceptions = listOf(
+                    RecurrenceException("2026-03-03", RecurrenceExceptionKind.COMPLETED),
+                ),
+            )
+        )
+
+        // 落到库里就是一行文本，和 SKIPPED / OVERRIDDEN 完全同一格式
+        assertThat(database.todoDao().findById(id)!!.recurrenceExceptions)
+            .isEqualTo("2026-03-03:COMPLETED")
+
+        val loaded = repository.findById(id)!!
+        assertThat(loaded.recurrenceExceptions)
+            .containsExactly(
+                RecurrenceException("2026-03-03", RecurrenceExceptionKind.COMPLETED)
+            )
+        // 完成状态没有被写进整条的 isDone
+        assertThat(loaded.isDone).isFalse()
+    }
+
+    @Test
     fun `删除后查不到`() = runTest {
         val id = repository.insert(newTodo())
 

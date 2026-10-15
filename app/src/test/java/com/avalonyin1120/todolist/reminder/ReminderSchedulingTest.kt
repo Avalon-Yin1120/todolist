@@ -4,6 +4,8 @@ import com.avalonyin1120.todolist.data.TodoDraft
 import com.avalonyin1120.todolist.data.TodoRepository
 import com.avalonyin1120.todolist.data.toTodo
 import com.avalonyin1120.todolist.domain.Recurrence
+import com.avalonyin1120.todolist.domain.RecurrenceException
+import com.avalonyin1120.todolist.domain.RecurrenceExceptionKind
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.ReminderStrategy
@@ -16,6 +18,8 @@ import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
+import java.time.DayOfWeek
+import java.time.LocalDate
 
 /**
  * 调度编排的语义测试：排什么、什么时候排、用哪个调度器、什么时候取消。
@@ -407,6 +411,209 @@ class ReminderSchedulingTest {
         val plan = inexact.planFor(created.todoId)
         assertThat(plan).isNotNull()
         assertThat(plan!!.occurrenceStart).isGreaterThan(first)
+    }
+
+    // -------------------------------------------------- 按场次完成（用户报的 bug）
+
+    /**
+     * 这一组用例针对的 bug：勾掉周期待办的某一场之后，其它场次也一起变成已完成。
+     *
+     * 根因是「完成」写在整条记录的 `isDone` 上，而周期待办展开时每一场都继承它。
+     * 现在完成按场次记（[RecurrenceExceptionKind.COMPLETED]），下面几条分别盯住
+     * 「不改整条状态」「后续场次照常提醒」「能取消完成」「不影响既有例外」。
+     */
+    @Test
+    fun `完成某一场不会把整条待办标记为已完成`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(updated.isDone).isFalse()
+        assertThat(updated.recurrenceExceptions).containsExactly(
+            RecurrenceException(
+                RecurrenceExpander.dateKeyOf(first, TestData.ZONE),
+                RecurrenceExceptionKind.COMPLETED,
+            )
+        )
+    }
+
+    @Test
+    fun `完成某一场后通知方式仍排定后续场次`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val tomorrow = first + 24 * 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+        assertThat(inexact.planFor(created.todoId)?.occurrenceStart).isEqualTo(first)
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+
+        // 关键：完成不能走「取消了就不再排」那条路，否则整个周期一起哑掉
+        assertThat(inexact.planFor(created.todoId)?.occurrenceStart).isEqualTo(tomorrow)
+        assertThat(work.planFor(created.todoId)?.occurrenceStart).isEqualTo(tomorrow)
+        // 通知式不占精确通道
+        assertThat(exact.planFor(created.todoId)).isNull()
+    }
+
+    @Test
+    fun `完成某一场后闹钟方式仍排定后续场次`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val tomorrow = first + 24 * 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(
+                startAt = first,
+                endAt = first + 30 * TestData.MINUTE,
+                mode = ReminderMode.ALARM,
+                recurrence = Recurrence.DAILY,
+            )
+        )
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+
+        // 闹钟式占精确通道 + 非精确通道（保险），两条都必须指向下一场
+        assertThat(exact.planFor(created.todoId)?.occurrenceStart).isEqualTo(tomorrow)
+        assertThat(inexact.planFor(created.todoId)?.occurrenceStart).isEqualTo(tomorrow)
+        assertThat(work.planFor(created.todoId)).isNull()
+    }
+
+    @Test
+    fun `已完成的那一场不再是要提醒的场次`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val tomorrow = first + 24 * 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+        assertThat(coordinator.nextOccurrenceToRemind(coordinator.findById(created.todoId)!!, now))
+            .isEqualTo(first)
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+
+        // 勾掉的这一场到点不再提醒，下一条排给明天那一场
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(coordinator.nextOccurrenceToRemind(updated, now)).isEqualTo(tomorrow)
+    }
+
+    @Test
+    fun `取消完成会恢复这一场的提醒`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+        coordinator.setOccurrenceDone(created.todoId, first, done = false)
+
+        val restored = coordinator.findById(created.todoId)!!
+        assertThat(restored.isDone).isFalse()
+        assertThat(restored.recurrenceExceptions).isEmpty()
+        assertThat(coordinator.nextOccurrenceToRemind(restored, now)).isEqualTo(first)
+        assertThat(inexact.planFor(created.todoId)?.occurrenceStart).isEqualTo(first)
+    }
+
+    @Test
+    fun `取消完成不会顺手删掉同一场的跳过例外`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+        coordinator.skipOccurrence(created.todoId, first)
+
+        coordinator.setOccurrenceDone(created.todoId, first, done = true)
+        coordinator.setOccurrenceDone(created.todoId, first, done = false)
+
+        // 「删除本次」记下的 SKIPPED 必须原样留着，否则用户取消一次打勾就把删掉的场次弄回来了
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(updated.recurrenceExceptions)
+            .containsExactly(
+                RecurrenceException(
+                    RecurrenceExpander.dateKeyOf(first, TestData.ZONE),
+                    RecurrenceExceptionKind.SKIPPED,
+                )
+            )
+    }
+
+    @Test
+    fun `每周重复完成一天不影响同周的另一天`() = runTest {
+        // 锚定本地日期：TestData.NOW 在 Asia/Shanghai 是 2025-01-15（周三）18:00
+        val wednesday = now + 60 * TestData.MINUTE
+        assertThat(RecurrenceExpander.dateKeyOf(wednesday, TestData.ZONE)).isEqualTo("2025-01-15")
+        val created = coordinator.create(
+            draft(
+                startAt = wednesday,
+                endAt = wednesday + 30 * TestData.MINUTE,
+                recurrence = Recurrence.WEEKLY,
+            ).copy(weekDays = setOf(DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))
+        )
+        val fridayDate = LocalDate.of(2025, 1, 17)
+
+        coordinator.setOccurrenceDone(created.todoId, wednesday, done = true)
+
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(RecurrenceExpander.occursOn(updated, fridayDate, TestData.ZONE)).isTrue()
+        assertThat(RecurrenceExpander.occurrenceOn(updated, fridayDate, TestData.ZONE).isDone)
+            .isFalse()
+        // 周五那一场仍然排在提醒队列里
+        assertThat(coordinator.nextOccurrenceToRemind(updated, now))
+            .isEqualTo(RecurrenceExpander.occurrenceOn(updated, fridayDate, TestData.ZONE).startAt)
+    }
+
+    @Test
+    fun `通知里的完成落到刚提醒过的那一场`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        val tomorrow = first + 24 * 60 * TestData.MINUTE
+        val created = coordinator.create(
+            draft(startAt = first, endAt = first + 30 * TestData.MINUTE, recurrence = Recurrence.DAILY)
+        )
+        coordinator.markRemindedAndReschedule(created.todoId, first)
+
+        // 通知上的「完成」只有 todoId、没有场次（见 ReminderActionReceiver），
+        // 因此用「刚提醒过的那一场」补出场次
+        coordinator.setDone(created.todoId, done = true)
+
+        val updated = coordinator.findById(created.todoId)!!
+        assertThat(updated.isDone).isFalse()
+        assertThat(updated.recurrenceExceptions.map { it.date })
+            .containsExactly(RecurrenceExpander.dateKeyOf(first, TestData.ZONE))
+        // 明天照常提醒，而不是整个系列哑掉
+        assertThat(coordinator.nextOccurrenceToRemind(updated, now)).isEqualTo(tomorrow)
+    }
+
+    @Test
+    fun `周期待办上遗留的整条完成标记不会让整个系列哑掉`() = runTest {
+        val first = now + 60 * TestData.MINUTE
+        // 旧版本「勾一场」写进去的 isDone=true，按场次完成之后它不再代表任何东西
+        val legacy = TestData.todo(
+            recurrence = Recurrence.DAILY,
+            startAt = first,
+            endAt = first + 30 * TestData.MINUTE,
+            isDone = true,
+        )
+
+        assertThat(coordinator.nextOccurrenceToRemind(legacy, now)).isEqualTo(first)
+    }
+
+    @Test
+    fun `一次性待办的完成行为不变`() = runTest {
+        val created = coordinator.create(draft())
+
+        coordinator.setDone(created.todoId, done = true)
+
+        val done = coordinator.findById(created.todoId)!!
+        assertThat(done.isDone).isTrue()
+        assertThat(done.recurrenceExceptions).isEmpty()
+        assertThat(inexact.planFor(created.todoId)).isNull()
+
+        coordinator.setDone(created.todoId, done = false)
+
+        val undone = coordinator.findById(created.todoId)!!
+        assertThat(undone.isDone).isFalse()
+        assertThat(undone.recurrenceExceptions).isEmpty()
+        assertThat(inexact.planFor(created.todoId)?.occurrenceStart)
+            .isEqualTo(now + 60 * TestData.MINUTE)
     }
 
     // ------------------------------------------------------------------ 对账

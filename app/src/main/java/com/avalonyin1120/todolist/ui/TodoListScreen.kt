@@ -232,7 +232,10 @@ fun TodoRoute(
                     fullScreenIntentAllowed = uiState.fullScreenIntentAllowed,
                     needsOemBackgroundGuide = uiState.needsOemBackgroundGuide,
                     alarmModeInUse = settings.useAlarmForReminders ||
-                        uiState.todos.any { it.mode == ReminderMode.ALARM && !it.isDone },
+                        uiState.todos.any {
+                            it.mode == ReminderMode.ALARM &&
+                                !RecurrenceExpander.asListEntry(it, zone).isDone
+                        },
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRequestExactAlarm = onRequestExactAlarmPermission,
                     onRequestIgnoreBatteryOptimization =
@@ -462,7 +465,11 @@ private fun TopHeader(
     onOpenSettings: () -> Unit,
     onAdd: () -> Unit,
 ) {
-    val pending = uiState.todos.filterNot { it.isDone }
+    // 「未完成」要按场次看：周期待办整条的 isDone 已经没有意义（见 asListEntry），
+    // 否则勾掉起始日那一场之后，这条周期待办会从倒计时里整个消失。
+    val pending = uiState.todos
+        .map { RecurrenceExpander.asListEntry(it, zone) }
+        .filterNot { it.isDone }
     val overdue = pending.filter { ReminderTime.remindAt(it.startAt, it.leadMinutes) <= now }
 
     Column {
@@ -595,9 +602,13 @@ private fun TodoOverview(
     onDelete: (Todo) -> Unit,
     onSetGrouping: (ListGrouping) -> Unit,
 ) {
+    // 总列表展示的是一条条「规则」，但周期待办的完成状态必须按场次看：
+    // 先映射成「起始日那一场」（见 asListEntry），再排序。否则勾完这一场卡片上
+    // 既看不出已完成、「按状态」排序也不会把它排到后面。
+    val entries = uiState.todos.map { RecurrenceExpander.asListEntry(it, zone) }
     val grouped: List<Todo> = when (uiState.grouping) {
-        ListGrouping.BY_TIME -> ListOrdering.byTime(uiState.todos)
-        ListGrouping.BY_DONE -> ListOrdering.byDone(uiState.todos)
+        ListGrouping.BY_TIME -> ListOrdering.byTime(entries)
+        ListGrouping.BY_DONE -> ListOrdering.byDone(entries)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

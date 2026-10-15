@@ -211,6 +211,30 @@ class TodoViewModelTest {
         assertThat(todos.single().id).isEqualTo(created.id)
     }
 
+    @Test
+    fun `编辑周期待办不会丢掉生效起始日期`() = runTest(testDispatcher) {
+        // 回归：openEditFormDirect 曾经漏传 recurrenceStartDate，
+        // 于是「编辑一次（整个系列）」就把用户设的生效起始日静默清空；
+        // TodoDraft 的相等判断含这个字段，顺带清掉了已提醒标记 → 只改个名字却又提醒一次。
+        fillValidForm("每周例会")
+        viewModel.form.setRecurrence(Recurrence.WEEKLY)
+        viewModel.form.setRecurrenceStartDate("2026-05-04")
+        viewModel.submitForm()
+        settle()
+        // 不假设库里只有这一条（测试夹具可能已经种了数据），按名字取
+        val created = viewModel.uiState.value.todos.first { it.name == "每周例会" }
+        assertThat(created.recurrenceStartDate).isEqualTo("2026-05-04")
+
+        viewModel.openEditForm(created)
+        // 只改名字，别的字段一个字都不动
+        viewModel.form.setName("每周例会（改）")
+        viewModel.submitForm()
+        settle()
+
+        val edited = viewModel.uiState.value.todos.first { it.name == "每周例会（改）" }
+        assertThat(edited.recurrenceStartDate).isEqualTo("2026-05-04")
+    }
+
     // ------------------------------------------------ 「仅修改这一次」（第 14 项回归）
 
     @Test
@@ -426,6 +450,125 @@ class TodoViewModelTest {
         viewModel.selectDateSoft(monday.plusWeeks(3))
         settle()
         assertThat(viewModel.uiState.value.selectedDate).isEqualTo(monday.plusWeeks(3))
+    }
+
+    // ------------------------------------------------ 切视图就回到本天/本周/本月
+    //
+    // 点底部的日/周/月视图不停在刚才在翻的那一期，而是回到今天 / 本周一 / 本月 1 号，
+    // 并且发一次跳转请求让 pager 滚过去（复用「回到今天/本周/本月」的做法）。
+
+    @Test
+    fun `切到周视图会回到本周一并发一次跳转请求`() = runTest(testDispatcher) {
+        settle()
+        val today = viewModel.uiState.value.selectedDate
+        // 先离开本周：用户滑到三个月后的某一天
+        viewModel.selectDate(today.plusMonths(3))
+        settle()
+        val before = viewModel.uiState.value.jumpRequest
+
+        viewModel.selectTab(NavTab.WEEK)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.WEEK)
+        assertThat(after.selectedDate).isEqualTo(CalendarLayout.weekStart(today))
+        assertThat(after.jumpRequest).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `切到月视图会回到本月一号并发一次跳转请求`() = runTest(testDispatcher) {
+        settle()
+        val today = viewModel.uiState.value.selectedDate
+        viewModel.selectDate(today.plusMonths(3))
+        settle()
+        val before = viewModel.uiState.value.jumpRequest
+
+        viewModel.selectTab(NavTab.MONTH)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.MONTH)
+        assertThat(after.selectedDate).isEqualTo(today.withDayOfMonth(1))
+        assertThat(after.jumpRequest).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `从月视图切到日视图会回到今天`() = runTest(testDispatcher) {
+        settle()
+        val today = viewModel.uiState.value.selectedDate
+        // 先离开本月：用户在日视图滑到三个月后
+        viewModel.selectDate(today.plusMonths(3))
+        settle()
+
+        // 切到月视图 = 看本月，selectedDate 落成粗粒度的代表日「本月 1 号」
+        viewModel.selectTab(NavTab.MONTH)
+        settle()
+        assertThat(viewModel.uiState.value.selectedDate).isEqualTo(today.withDayOfMonth(1))
+        val before = viewModel.uiState.value.jumpRequest
+
+        // 这个 1 号不能漏进日视图：切到日视图看的是今天
+        viewModel.selectTab(NavTab.DAY)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.DAY)
+        assertThat(after.selectedDate).isEqualTo(today)
+        assertThat(after.jumpRequest).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `切到月视图不会把本月里更具体的那一天降级成一号`() = runTest(testDispatcher) {
+        settle()
+        // 用户真正关心的是「本月 20 号」而不是 1 号（翻页回写或「回到今天」都会留下这种状态）
+        val aDayInThisMonth = viewModel.uiState.value.selectedDate.withDayOfMonth(20)
+        viewModel.selectDateSoft(aDayInThisMonth)
+        settle()
+        val before = viewModel.uiState.value.jumpRequest
+
+        viewModel.selectTab(NavTab.MONTH)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.MONTH)
+        // 与「回到本月」同一套软写入语义：同期里更具体的某一天不被代表日覆盖
+        assertThat(after.selectedDate).isEqualTo(aDayInThisMonth)
+        assertThat(after.jumpRequest).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `原地再点一次日视图也会回到今天`() = runTest(testDispatcher) {
+        settle()
+        val today = viewModel.uiState.value.selectedDate
+        // 日视图里左右滑动：pager 把当前显示的那一天软写回来
+        viewModel.selectDateSoft(today.plusDays(3))
+        settle()
+        assertThat(viewModel.uiState.value.selectedDate).isEqualTo(today.plusDays(3))
+        val before = viewModel.uiState.value.jumpRequest
+
+        // 再点一次已经选中的「日视图」
+        viewModel.selectTab(NavTab.DAY)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.DAY)
+        assertThat(after.selectedDate).isEqualTo(today)
+        assertThat(after.jumpRequest).isEqualTo(before + 1)
+    }
+
+    @Test
+    fun `切到待办视图不改日期也不发跳转请求`() = runTest(testDispatcher) {
+        settle()
+        viewModel.selectDate(viewModel.uiState.value.selectedDate.plusMonths(3))
+        settle()
+        val before = viewModel.uiState.value
+
+        viewModel.selectTab(NavTab.TODO)
+        settle()
+
+        val after = viewModel.uiState.value
+        assertThat(after.tab).isEqualTo(NavTab.TODO)
+        assertThat(after.selectedDate).isEqualTo(before.selectedDate)
+        assertThat(after.jumpRequest).isEqualTo(before.jumpRequest)
     }
 
     // ------------------------------------------------ 提醒可靠性检查（真机不响的首要原因）
