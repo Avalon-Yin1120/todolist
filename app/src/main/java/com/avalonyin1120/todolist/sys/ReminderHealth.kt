@@ -348,9 +348,13 @@ object ReminderHealth {
          * 真机排查用的一行原始值，格式固定：
          * `importance=4 / 声音=读不到 / 振动=开 / 锁屏=可见`。
          *
-         * 为什么要摆到界面上：这类误判只有拿到用户手机上的真实读数才能定位。此前我们手上
+         * 为什么还要留着它：这类误判只有拿到用户手机上的真实读数才能定位。此前我们手上
          * 只有「它说未开启」这一句话，既分不清是 ROM 读不准还是我们的判定写错了。
-         * 格式固定（而不是随场景变化）是为了让用户截图之间可以直接对比。
+         * 格式固定（而不是随场景变化）是为了让两次读数能直接对比。
+         *
+         * **它已经不出现在检查页上了**：那一页改成「给路径 + 用户自己确认」，
+         * 半懂不懂的原始值摆在那里只会让用户更困惑（用户反馈：字太多、术语太多）。
+         * 现在它留给排查与诊断记录用，界面侧由「查看提醒诊断日志」承接。
          */
         fun rawValuesText(): String = listOf(
             "importance=$importance",
@@ -370,7 +374,12 @@ object ReminderHealth {
      * 只会改得动名字和描述。所以「通知没声音」「被判成静默」这类问题，
      * 应用侧唯一的办法是引导用户自己去系统设置里改——本函数就是给那个引导提供依据。
      *
-     * 也正因为渠道一旦建出来就改不动，界面必须把**每一条**渠道的真实状态列出来。
+     * ## 谁在用这些判定
+     *
+     * 顶部横幅的「还有 N 项没打开」（[activeChannelHealthy]）与真机排查（[ChannelHealth.rawValuesText]）。
+     * 检查页**不再展示**这些读数：那些开关一旦建出来应用就改不动，只能用户去系统里改，
+     * 因此那一页改成「给一行路径 + 用户自己勾『我已设置好』」（见下面的清单部分），
+     * 读不准的值不再摆到用户面前。
      *
      * ## 静默判定为什么改成「只看重要性」（Android 15 / ColorOS 真机误报的结论）
      *
@@ -395,7 +404,7 @@ object ReminderHealth {
      * 去判它静默。两个方向的错法代价并不对称，这才是取舍的依据：
      * 误报静默 → 用户被指去改一个本来正常的开关，改完页面还是红的（渠道创建后应用改不动，
      * 只能用户改，而用户那边已经是对的，于是**永远无法消除**）；漏报静默 → 最坏只是这一条不出声，
-     * 而界面已经把「声音=读不到」这个原始值摆出来，用户和我们都能看到线索。
+     * 而「声音=读不到」这个原始值还能在排查时拿到（[ChannelHealth.rawValuesText]）。
      * 另外，应用自己那条静音渠道**不需要**靠这个判定来识别：它是应用自己建的，
      * 谁在用完全由「通知提示音」设置决定（见 [activeChannelHealthy]）。
      *
@@ -620,5 +629,400 @@ object ReminderHealth {
         }
         // 同一个组件可能被上面写重复（不同版本落在不同包），去重后再逐个试，避免白跳两次
         return list.distinctBy { it.first.component?.flattenToString() ?: it.first.action }
+    }
+
+    // -----------------------------------------------------------------------
+    // 「照着做」的设置清单（页面主体）
+    // -----------------------------------------------------------------------
+    // 为什么整份清单放在这一层，而不是写死在 Composable 里：
+    // * 这一页的业务逻辑只有两件事——给用户看哪几条、其中几条还没完成——放在这里就能用普通
+    //   单元测试钉住（OPPO 那四条原文、「以用户确认为准」的计数），不必去跑 Compose 测试；
+    // * 跳转目标是枚举而不是 Intent：页面只把它翻译成一次 openXxx 调用，厂商页面不存在时的
+    //   兜底仍然只有 [launchFirstAvailable] 一处，界面里不再自己拼一套跳转。
+    //
+    // 文案总原则（用户反馈：这一页字太多、术语太多）：短句、动词开头、不说原理、
+    // 不出现 importance / 渠道 / 数字指标。机制说明留在本文件的注释与 README 里，
+    // 不摆到用户面前——用户要的是「点哪里、改成什么」，不是判定规则。
+
+    /** 手机厂商分组：决定给用户看哪一套「去哪里改」的路径。 */
+    enum class PhoneBrand { OPPO, XIAOMI, HUAWEI, VIVO, OTHER }
+
+    /**
+     * 按品牌/厂商名判分组。
+     *
+     * 只用来选展示哪一组路径，**不参与任何跳转决策**：跳哪一页仍由各 `openXxx` 的候选链
+     * 在运行时 `resolveActivity` 决定。因此这里判错的代价只是用户看到另一组路径
+     * （同一件事各厂商叫法不同，而且路径本身也照实标了「各版本可能不同」）。
+     *
+     * 写成接收两个字符串的纯函数（而不是直接读 [Build]）：单元测试里改不了 Build 的静态字段，
+     * 参数化之后每个分组才能被测到。
+     */
+    fun brandOf(brand: String, manufacturer: String): PhoneBrand {
+        val text = (brand + " " + manufacturer).lowercase()
+        return when {
+            listOf("oppo", "realme", "oneplus").any { text.contains(it) } -> PhoneBrand.OPPO
+            listOf("xiaomi", "redmi", "poco").any { text.contains(it) } -> PhoneBrand.XIAOMI
+            listOf("huawei", "honor").any { text.contains(it) } -> PhoneBrand.HUAWEI
+            listOf("vivo", "iqoo").any { text.contains(it) } -> PhoneBrand.VIVO
+            else -> PhoneBrand.OTHER
+        }
+    }
+
+    /** 当前真机的分组：页面顶部那行「你的手机：…」由它决定。 */
+    fun currentBrand(): PhoneBrand = brandOf(Build.BRAND.orEmpty(), Build.MANUFACTURER.orEmpty())
+
+    /** 分组在界面上的名字，用户要一眼认出该看哪一组。 */
+    fun brandLabel(brand: PhoneBrand): String = when (brand) {
+        PhoneBrand.OPPO -> "OPPO / 一加 / realme（ColorOS）"
+        PhoneBrand.XIAOMI -> "小米 / 红米（MIUI / 澎湃 OS）"
+        PhoneBrand.HUAWEI -> "华为 / 荣耀"
+        PhoneBrand.VIVO -> "vivo / iQOO（OriginOS）"
+        PhoneBrand.OTHER -> "其他安卓手机（原生 / 三星 / 魅族等）"
+    }
+
+    /**
+     * 系统里**读得到**的那几个开关。
+     *
+     * 只有这几项参与「是不是已经好了」的自动判定：它们都有明确的公开读取接口，读回来是什么
+     * 就是什么。厂商自己的开关（后台弹出界面、耗电管理）与通知渠道的静默/横幅/锁屏细节
+     * 都不在这里——那些读不到，或者在真机上被证伪过（见 [ChannelHealth] 的注释）。
+     */
+    enum class AutoCheck { NOTIFICATIONS, EXACT_ALARM, FULL_SCREEN_INTENT, BATTERY }
+
+    /**
+     * 「去设置」要打开的那一处。
+     *
+     * 取值刻意只覆盖本文件里已有的候选意图链：直达不了时由 [launchFirstAvailable] 兜到
+     * 应用详情页，所以这里不需要再单列一个「应用详情」目标。
+     */
+    enum class SettingsTarget {
+        NOTIFICATION,
+        EXACT_ALARM,
+        BACKGROUND_POPUP,
+        FULL_SCREEN_INTENT,
+        BATTERY,
+    }
+
+    /** 页面拿到的四项系统状态（调用方从系统读好传进来，这里只做判断与展示）。 */
+    data class SystemStates(
+        val notifications: Boolean,
+        val exactAlarm: Boolean,
+        val fullScreenIntent: Boolean,
+        val batteryUnrestricted: Boolean,
+    ) {
+        fun isOn(check: AutoCheck): Boolean = when (check) {
+            AutoCheck.NOTIFICATIONS -> notifications
+            AutoCheck.EXACT_ALARM -> exactAlarm
+            AutoCheck.FULL_SCREEN_INTENT -> fullScreenIntent
+            AutoCheck.BATTERY -> batteryUnrestricted
+        }
+    }
+
+    /**
+     * 清单里的一条：一句标题 + 一行路径 + 一个「去设置」+ 一个「我已设置好」。
+     *
+     * @param id 持久化用的稳定 id（存进设置里的「已确认项」集合）。**发布后不能再改**：
+     *   改了等于把用户之前勾的全部丢掉。
+     * @param autoCheck 能自动读到的那个开关；有值且读回「已允许」就算这一条完成。
+     *   **读不到状态的一律为 null**——那种情况只认用户勾选，页面不替系统报一个状态。
+     * @param hintCheck 这一条里另有一个读得到的开关，但**不参与计数**，只出一句人话提示。
+     *   目前只有 OPPO 的「后台弹出界面和发送全屏通知」用它：前半句读不到、后半句读得到，
+     *   混在一条里时不能拿后半句当整条的结论（拿它当结论就是在替读不到的那半句报状态）。
+     */
+    data class ChecklistStep(
+        val id: String,
+        val title: String,
+        val path: String,
+        val target: SettingsTarget,
+        val autoCheck: AutoCheck? = null,
+        val hintCheck: AutoCheck? = null,
+    )
+
+    /** 清单的一组：界面上用它当小标题，下面依次是 [steps]。 */
+    data class ChecklistSection(val title: String, val steps: List<ChecklistStep>)
+
+    // 下面这些 id 是持久化契约（用户勾选就存它们）：只能新增，不能改名，否则用户的勾选会丢
+    const val STEP_LOCKSCREEN_BANNER = "lockscreen_banner"
+    const val STEP_SILENT_OFF = "silent_off"
+    const val STEP_BACKGROUND_POPUP = "background_popup"
+    const val STEP_BATTERY = "battery"
+    const val STEP_ALLOW_NOTIFICATIONS = "allow_notifications"
+    const val STEP_EXACT_ALARM = "exact_alarm"
+    const val STEP_FULL_SCREEN_INTENT = "full_screen_intent"
+
+    /**
+     * 页面主体：两组清单。
+     *
+     * 顺序是「先厂商路径、后系统权限」：用户来这一页就是为了照着厂商路径改那几个开关；
+     * 系统权限那几条能自动检测、多数时候本来就是好的，放后面不占视线。
+     */
+    fun sections(brand: PhoneBrand, alarmModeInUse: Boolean): List<ChecklistSection> = listOf(
+        ChecklistSection("你的手机：" + brandLabel(brand), oemSteps(brand)),
+        ChecklistSection("系统权限", systemSteps(brand, alarmModeInUse)),
+    )
+
+    /**
+     * 展平后的全部条目。
+     *
+     * 页面用 [sections] 渲染、用这一份计数，测试也用它断言「看见了哪几条」：
+     * 两者必须是同一批数据，否则会出现「看见 6 条、计数只算 4 条」这种对不上的情况。
+     */
+    fun steps(brand: PhoneBrand, alarmModeInUse: Boolean): List<ChecklistStep> =
+        sections(brand, alarmModeInUse).flatMap { it.steps }
+
+    /**
+     * 厂商路径那一组。
+     *
+     * 这些路径是**经验值**（按各 ROM 常见版本的叫法整理的），不同版本可能不一样，页面顶部
+     * 照实标注了这一点——宁可让用户按路径自己找，也不把一条「看起来很精确」的路径说成保证。
+     * OPPO 那四条是用户在真机上逐条核对过的原文，一字不改。
+     *
+     * 全部 `autoCheck = null`：这一组的开关要么没有公开 API（后台弹出界面、耗电管理），
+     * 要么读回来的值在真机上被证伪过（渠道的静默/横幅/锁屏细节），所以一律只认用户勾选；
+     * 其中确实读得到的那个（电池优化、发送全屏通知）降级成 [ChecklistStep.hintCheck] 的一句提示。
+     */
+    private fun oemSteps(brand: PhoneBrand): List<ChecklistStep> = when (brand) {
+        // OPPO / 一加 / realme：用户给的四条原文（标题即为原话，路径只把「/」换成箭头）
+        PhoneBrand.OPPO -> listOf(
+            step(
+                STEP_LOCKSCREEN_BANNER,
+                "打开锁屏和横幅通知",
+                "应用详情 → 通知管理 → 锁屏和横幅打勾",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_SILENT_OFF,
+                "关掉静默通知",
+                "应用详情 → 通知管理 → 待办提醒（有声）和闹钟式提醒 → 静默通知（关掉）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_BACKGROUND_POPUP,
+                "允许后台弹出界面和发送全屏通知",
+                "应用详情 → 权限管理 → 其他权限 / 特殊应用权限 → 后台弹出界面 和 发送全屏通知（允许）",
+                SettingsTarget.BACKGROUND_POPUP,
+                hintCheck = AutoCheck.FULL_SCREEN_INTENT,
+            ),
+            step(
+                STEP_BATTERY,
+                "允许完全后台行为",
+                "应用详情 → 耗电管理 → 完全允许后台行为",
+                SettingsTarget.BATTERY,
+                // 只作提示、不参与计数：这里真正管事的是 ColorOS 的「完全允许后台行为」，
+                // 而读得到的是 AOSP 那套电池优化白名单，两者不是一回事（见本文件里
+                // openBatteryOptimizationSettings 的注释），拿它当结论会偏乐观。
+                hintCheck = AutoCheck.BATTERY,
+            ),
+        )
+
+        // 小米 / 红米（MIUI / 澎湃 OS）
+        PhoneBrand.XIAOMI -> listOf(
+            step(
+                STEP_LOCKSCREEN_BANNER,
+                "打开锁屏和横幅通知",
+                "应用详情 → 通知管理 → 锁屏通知 和 横幅通知（打开）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_SILENT_OFF,
+                "关掉静默通知",
+                "应用详情 → 通知管理 → 待办提醒（有声）→ 静默通知（关掉）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_BACKGROUND_POPUP,
+                "允许后台弹出界面",
+                "应用详情 → 权限管理 → 其他权限 → 后台弹出界面（允许）",
+                SettingsTarget.BACKGROUND_POPUP,
+            ),
+            step(
+                STEP_BATTERY,
+                "允许后台运行和自启动",
+                "应用详情 → 省电策略 → 无限制；自启动 → 允许",
+                SettingsTarget.BATTERY,
+                hintCheck = AutoCheck.BATTERY,
+            ),
+        )
+
+        // 华为 / 荣耀（EMUI / MagicOS）
+        PhoneBrand.HUAWEI -> listOf(
+            step(
+                STEP_LOCKSCREEN_BANNER,
+                "打开锁屏和横幅通知",
+                "应用详情 → 通知管理 → 锁屏通知 和 横幅通知（打开）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_SILENT_OFF,
+                "关掉静默通知",
+                "应用详情 → 通知管理 → 待办提醒（有声）→ 静默通知（关掉）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_BACKGROUND_POPUP,
+                "允许后台弹出界面",
+                "应用详情 → 权限管理 → 其他权限 → 后台弹出界面（允许）",
+                SettingsTarget.BACKGROUND_POPUP,
+            ),
+            step(
+                STEP_BATTERY,
+                "允许后台运行",
+                "手机管家 → 应用启动管理 → 本应用 → 手动管理（自启动、关联启动、后台活动都允许）",
+                SettingsTarget.BATTERY,
+                hintCheck = AutoCheck.BATTERY,
+            ),
+        )
+
+        // vivo / iQOO（OriginOS）
+        PhoneBrand.VIVO -> listOf(
+            step(
+                STEP_LOCKSCREEN_BANNER,
+                "打开锁屏和横幅通知",
+                "应用详情 → 通知管理 → 锁屏通知 和 横幅通知（打开）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_SILENT_OFF,
+                "关掉静默通知",
+                "应用详情 → 通知管理 → 待办提醒（有声）→ 静默通知（关掉）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_BACKGROUND_POPUP,
+                "允许后台弹出界面",
+                "应用详情 → 权限管理 → 其他权限 → 后台弹出界面（允许）",
+                SettingsTarget.BACKGROUND_POPUP,
+            ),
+            step(
+                STEP_BATTERY,
+                "允许后台高耗电",
+                "应用详情 → 电池 → 后台高耗电（允许）",
+                SettingsTarget.BATTERY,
+                hintCheck = AutoCheck.BATTERY,
+            ),
+        )
+
+        // 类原生 / 三星 / 魅族等：没有厂商自己那套「后台弹出界面」，少一条，其余叫法照系统原文
+        PhoneBrand.OTHER -> listOf(
+            step(
+                STEP_LOCKSCREEN_BANNER,
+                "打开锁屏和横幅通知",
+                "应用详情 → 通知管理 → 锁屏通知 和 横幅通知（打开）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_SILENT_OFF,
+                "关掉静默通知",
+                "应用详情 → 通知管理 → 待办提醒（有声）→ 静默通知（关掉）",
+                SettingsTarget.NOTIFICATION,
+            ),
+            step(
+                STEP_BATTERY,
+                "允许后台运行",
+                "应用详情 → 电池 → 不受限制（三星：设置 → 电池 → 后台使用限制 → 允许后台活动）",
+                SettingsTarget.BATTERY,
+                hintCheck = AutoCheck.BATTERY,
+            ),
+        )
+    }
+
+    /**
+     * 「系统权限」那一组：全是 Android 自己有明确读取接口的开关，读得到就不用用户操心。
+     *
+     * 为什么能自动检测的只留这几条、而且还单独成一组：这三条的状态是确定的（已允许/未允许），
+     * 用户看完可以直接跳过；和厂商路径混排会让「哪些不用管」看不出来。
+     *
+     * 两个只在需要时出现的条目：
+     * * 「闹钟和提醒」与「发送全屏通知」都只为**闹钟式提醒**服务。通知式提醒既不要求精确闹钟、
+     *   也不弹整屏页面，这时候把它们列出来等于让用户去开一个用不到的开关，而且计数会永远差一项。
+     * * OPPO 那一组的第 3 条已经把「发送全屏通知」写进路径了，这里不再重复列一条（重复就是冗余）。
+     */
+    private fun systemSteps(brand: PhoneBrand, alarmModeInUse: Boolean): List<ChecklistStep> = buildList {
+        add(
+            step(
+                STEP_ALLOW_NOTIFICATIONS,
+                "允许这个应用发通知",
+                "应用详情 → 通知管理 → 允许通知（打开）",
+                SettingsTarget.NOTIFICATION,
+                autoCheck = AutoCheck.NOTIFICATIONS,
+            ),
+        )
+        if (!alarmModeInUse) return@buildList
+        add(
+            step(
+                STEP_EXACT_ALARM,
+                "允许「闹钟和提醒」",
+                "应用详情 → 权限管理 → 其他权限 / 特殊应用权限 → 闹钟和提醒（允许）",
+                SettingsTarget.EXACT_ALARM,
+                autoCheck = AutoCheck.EXACT_ALARM,
+            ),
+        )
+        if (brand != PhoneBrand.OPPO) {
+            add(
+                step(
+                    STEP_FULL_SCREEN_INTENT,
+                    "允许「发送全屏通知」",
+                    "应用详情 → 通知管理 → 发送全屏通知（允许）",
+                    SettingsTarget.FULL_SCREEN_INTENT,
+                    autoCheck = AutoCheck.FULL_SCREEN_INTENT,
+                ),
+            )
+        }
+    }
+
+    /** 免去每条都写一遍参数名；[ChecklistStep] 的默认值已经说明了哪些可以省。 */
+    private fun step(
+        id: String,
+        title: String,
+        path: String,
+        target: SettingsTarget,
+        autoCheck: AutoCheck? = null,
+        hintCheck: AutoCheck? = null,
+    ) = ChecklistStep(id, title, path, target, autoCheck, hintCheck)
+
+    /**
+     * 这一条还差着吗。判定顺序与用户约定的一致：**先看用户确认，再看系统读数**。
+     *
+     * * 用户勾了「我已设置好」→ 无论系统读出什么，都不再算未完成（也就不会再被提示）；
+     * * 没勾、且这一条有可读的开关、读数确实是「未允许」→ 算一条未完成；
+     * * 没勾、且这一条读不到状态（[ChecklistStep.autoCheck] 为 null）→ 也算未完成，等用户确认。
+     *   这不是「谎报它没开」，而是「还没确认」：页面上一句状态都不显示（见 [statusHint]），
+     *   只说「这一条请你照着路径核对一下」。
+     */
+    fun isStepPending(step: ChecklistStep, states: SystemStates, confirmed: Set<String>): Boolean {
+        if (step.id in confirmed) return false
+        val check = step.autoCheck ?: return true
+        return !states.isOn(check)
+    }
+
+    /** 顶部那句「还有 N 项没设置好」里的数字。 */
+    fun pendingStepCount(
+        steps: List<ChecklistStep>,
+        states: SystemStates,
+        confirmed: Set<String>,
+    ): Int = steps.count { isStepPending(it, states, confirmed) }
+
+    /** 可读开关在用户眼里的名字：提示里要点明是哪一个，免得和整条的结论混淆。 */
+    fun autoCheckLabel(check: AutoCheck): String = when (check) {
+        AutoCheck.NOTIFICATIONS -> "通知权限"
+        AutoCheck.EXACT_ALARM -> "闹钟和提醒"
+        AutoCheck.FULL_SCREEN_INTENT -> "发送全屏通知"
+        AutoCheck.BATTERY -> "电池优化"
+    }
+
+    /**
+     * 这一条能给出的「一句人话」状态提示；**读不到状态的条返回 null**（一个字都不显示）。
+     *
+     * 两种来源：[ChecklistStep.autoCheck]（也参与计数）与 [ChecklistStep.hintCheck]（只提示）。
+     * 后者要带上开关名字，因为同一行里还有读不到的东西，光说「系统里看是未允许」会被当成整条的结论。
+     */
+    fun statusHint(step: ChecklistStep, states: SystemStates): String? {
+        val check = step.hintCheck ?: step.autoCheck ?: return null
+        val state = if (states.isOn(check)) "已允许" else "未允许"
+        return if (step.hintCheck != null) {
+            "${autoCheckLabel(check)} 系统里看是：$state"
+        } else {
+            "系统里看是：$state"
+        }
     }
 }

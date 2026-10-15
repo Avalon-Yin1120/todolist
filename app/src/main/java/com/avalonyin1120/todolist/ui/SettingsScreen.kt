@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.WeekWindow
 
 /**
@@ -99,12 +101,9 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             SectionTitle("提醒")
-            SettingSwitch(
-                title = "默认使用闹钟式提醒",
-                subtitle = "新建待办时默认选择「闹钟式」：到点响铃、点亮屏幕并弹出提醒页",
-                checked = state.useAlarmForReminders,
-                tag = TAG_SETTING_ALARM,
-                onCheckedChange = { onChange(SettingsChange.UseAlarm(it)) },
+            DefaultModePicker(
+                selected = state.defaultReminderMode,
+                onSelect = { onChange(SettingsChange.DefaultMode(it)) },
             )
             SettingSwitch(
                 title = "通知提示音",
@@ -416,6 +415,60 @@ private fun SettingSwitch(
     }
 }
 
+/**
+ * 「新建待办时默认选择」的三档选择器。
+ *
+ * 用和新增表单里「提醒方式」完全一样的 FilterChip 三连（同样的顺序、同样的措辞）：
+ * 设置页选的这一项，就是用户在表单里会看到的选中态，两处长得一样才一眼对得上。
+ * 一个开关只能表达「闹钟式 / 非闹钟式」，而「默认不通知」是真实存在的诉求。
+ */
+@Composable
+private fun DefaultModePicker(
+    selected: ReminderMode,
+    onSelect: (ReminderMode) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text("新建待办时默认选择", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = "新建待办时会预先选中这一项，之后每条待办都能单独改。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // 直接按枚举声明顺序排（NOTIFICATION / ALARM / NONE），与表单里三连的顺序一致，
+            // 避免两处肌肉记忆打架。枚举顺序本身是存储契约的一部分（见 ReminderMode 的注释），
+            // 不会为了排版好看被人调换，所以这里可以放心用它。
+            ReminderMode.entries.forEach { mode ->
+                FilterChip(
+                    selected = mode == selected,
+                    onClick = { onSelect(mode) },
+                    label = { Text(defaultModeLabel(mode)) },
+                    modifier = Modifier
+                        .weight(1f)
+                        // 标签按枚举名生成（TAG_DEFAULT_MODE_ALARM 等），
+                        // 以后加档位不用手写新常量，测试也能直接按枚举名找控件
+                        .testTag(TAG_DEFAULT_MODE_PREFIX + mode.name),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 三档的中文名。
+ *
+ * 与表单里的 FilterChip 文案必须一致（那边是写死的三个字面量，这里按枚举取），
+ * 改文案时两处一起改——否则设置页说「闹钟式」、表单里写别的名字，用户会以为是两个功能。
+ */
+private fun defaultModeLabel(mode: ReminderMode): String = when (mode) {
+    ReminderMode.NOTIFICATION -> "通知"
+    ReminderMode.ALARM -> "闹钟式"
+    ReminderMode.NONE -> "不通知"
+}
+
 /** 可点击的整行设置项（用于「关于」这类跳转入口）。 */
 @Composable
 private fun SettingRow(
@@ -458,7 +511,16 @@ private fun SettingRow(
 
 /** 设置项的快照。 */
 data class SettingsUiState(
-    val useAlarmForReminders: Boolean = false,
+    /**
+     * 用户在「提醒可靠性检查」页亲手勾过的「我已设置好」项（step id 集合）。
+     *
+     * 放进界面状态是因为顶部的「有 N 项未开启」必须与检查页同源：
+     * 那些读不到状态的开关只能靠用户确认，勾过之后横幅就该消失，
+     * 否则用户明明按引导做完了，主界面还一直挂着一句「未开启」。
+     */
+    val confirmedHealthItems: Set<String> = emptySet(),
+    /** 新建待办时预先选中的提醒方式（通知 / 闹钟式 / 不通知）。 */
+    val defaultReminderMode: ReminderMode = ReminderMode.NOTIFICATION,
     val confirmBeforeDelete: Boolean = true,
     val warnOnOverlap: Boolean = true,
     val lastLeadMinutes: Int = 0,
@@ -476,7 +538,8 @@ data class SettingsUiState(
 
 /** 设置项的变更意图。 */
 sealed interface SettingsChange {
-    data class UseAlarm(val value: Boolean) : SettingsChange
+    /** 新建待办的默认提醒方式（三档：通知 / 闹钟式 / 不通知）。 */
+    data class DefaultMode(val value: ReminderMode) : SettingsChange
     data class ConfirmDelete(val value: Boolean) : SettingsChange
     data class WarnOverlap(val value: Boolean) : SettingsChange
     data class NotificationSound(val value: Boolean) : SettingsChange
@@ -491,7 +554,14 @@ sealed interface SettingsChange {
     data object ResetWeekWindow : SettingsChange
 }
 
-const val TAG_SETTING_ALARM = "setting_alarm"
+/**
+ * 「新建待办时默认选择」三档选择器的测试标签前缀。
+ *
+ * 拼上 [ReminderMode.name] 才是完整标签，例如 `TAG_DEFAULT_MODE_ALARM`。
+ * 让标签由枚举名生成而不是写三个常量：选档控件与档位一一对应，
+ * 以后补档位时不会出现「有按钮、没标签」。
+ */
+const val TAG_DEFAULT_MODE_PREFIX = "setting_default_mode_"
 const val TAG_SETTING_CONFIRM_DELETE = "setting_confirm_delete"
 const val TAG_SETTING_WARN_OVERLAP = "setting_warn_overlap"
 const val TAG_SETTING_NOTIFICATION_SOUND = "setting_notification_sound"

@@ -10,6 +10,7 @@ import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.ReminderStrategy
 import com.avalonyin1120.todolist.domain.Todo
+import com.avalonyin1120.todolist.notify.ReminderLog
 import com.avalonyin1120.todolist.domain.toReminderPlanFor
 import com.avalonyin1120.todolist.sys.ExactAlarmPermission
 import java.time.ZoneId
@@ -377,20 +378,37 @@ class ReminderFiringService(
 ) : ReminderFireHandler {
 
     override suspend fun fire(todoId: Long, occurrenceStart: Long) {
-        val todo = coordinator.findById(todoId) ?: return
+        val todo = coordinator.findById(todoId)
+        if (todo == null) {
+            ReminderLog.add(ReminderLog.CAT_FIRE, "触发时找不到待办（可能已被删除）：todo=$todoId")
+            return
+        }
+        ReminderLog.add(ReminderLog.CAT_FIRE, "到点触发：${todo.name}｜方式=${todo.mode}｜todo=$todoId")
         // isDone 只对一次性待办有意义：周期待办的完成按场次记，整条记录上遗留的 true
         // 如果在这里也照挡，就会出现「排定了却永远不响」的哑火
-        if (todo.isDone && !todo.recurrence.isRecurring) return
+        if (todo.isDone && !todo.recurrence.isRecurring) {
+            ReminderLog.add(ReminderLog.CAT_FIRE, "跳过：已完成")
+            return
+        }
         // 提醒已经排出去之后，用户才把它改成「不通知」时，可能还剩一条在途的触发
         //（广播已投递、Worker 已开跑），取消调度来不及拦住它。这里再挡一次，
         // 否则用户明明关掉了提醒却仍然收到通知——这正是「不通知」最不能出的错。
-        if (todo.mode == ReminderMode.NONE) return
+        if (todo.mode == ReminderMode.NONE) {
+            ReminderLog.add(ReminderLog.CAT_FIRE, "跳过：这条待办选了「不通知」")
+            return
+        }
         // 这一场已经被勾掉了（提前完成，或通知还挂着时用户已经在列表里完成）：
         // 不能提醒。也不需要在这里补一次重排——完成那一步已经 scheduleFor 把下一场排好了。
-        if (coordinator.isOccurrenceCompleted(todo, occurrenceStart)) return
+        if (coordinator.isOccurrenceCompleted(todo, occurrenceStart)) {
+            ReminderLog.add(ReminderLog.CAT_FIRE, "跳过：这一场已被标记完成")
+            return
+        }
         // 必须先判断「这一场是否已经提醒过」，再去标记与重排。
         // 若顺序颠倒，第二次触发会先被重新排定，导致同一场次重复提醒。
-        if (todo.remindedOccurrenceStart == occurrenceStart) return
+        if (todo.remindedOccurrenceStart == occurrenceStart) {
+            ReminderLog.add(ReminderLog.CAT_FIRE, "跳过：这一场已经提醒过了（保险通道/重复投递）")
+            return
+        }
         onFire(todo)
         coordinator.markRemindedAndReschedule(todoId, occurrenceStart)
     }

@@ -59,6 +59,10 @@ open class NotificationHelper(
         if (manager.getNotificationChannel(CHANNEL_ID_SILENT) == null) {
             manager.createNotificationChannel(silentChannel())
         }
+        // 响铃时常驻通知那条渠道也在这里建：用户反馈「系统设置的类别里，闹钟式提醒
+        // 只有响过一遍闹钟后才出现」——那是本应用的行为（原来只在响铃服务里建），
+        // 于是用户出事之前看不到、也改不了它。放到应用启动时建，类别列表里一开始就有。
+        AlarmRingService.ensureAlarmRingChannel(context)
         Log.i(
             TAG,
             "通知渠道就绪：$CHANNEL_ID 声音=${manager.getNotificationChannel(CHANNEL_ID)?.sound}" +
@@ -175,6 +179,18 @@ open class NotificationHelper(
         val notification = builder.build()
 
         val notificationId = notificationIdOf(todo.id)
+        val channel = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            context.getSystemService(NotificationManager::class.java)
+                ?.getNotificationChannel(channelId())
+        } else {
+            null
+        }
+        ReminderLog.add(
+            ReminderLog.CAT_NOTIFY,
+            "发提醒：${todo.name}｜方式=${todo.mode}｜渠道=${channelId()}" +
+                "｜渠道声音=${if (channel?.sound == null) "无" else "有"}" +
+                "｜重要性=${channel?.importance ?: "?"}｜通知权限=${canPostNotifications()}",
+        )
         if (canPostNotifications()) {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
             Log.i(
@@ -185,6 +201,7 @@ open class NotificationHelper(
         } else {
             // 不开日志就会「什么都没发生」：把原因明确记下来
             Log.w(TAG, "通知权限未开启，无法发出通知：todo=${todo.id}")
+            ReminderLog.add(ReminderLog.CAT_NOTIFY, "通知没发出去：没有通知权限（todo=${todo.id}）")
         }
 
         // 闹钟式：额外启动前台服务，确保响铃、亮屏并弹出闹钟页。
@@ -206,11 +223,16 @@ open class NotificationHelper(
         try {
             AlarmRingService.start(context, todo.id, todo.name, todo.updatedAt)
             Log.i(TAG, "已请求启动闹钟响铃服务：todo=${todo.id}")
+            ReminderLog.add(ReminderLog.CAT_RING, "请求启动响铃服务：todo=${todo.id}")
         } catch (e: Exception) {
             Log.e(
                 TAG,
                 "启动闹钟响铃服务失败（Android 12+ 可能限制后台启动前台服务）：" +
                     "${e.javaClass.simpleName} ${e.message}",
+            )
+            ReminderLog.add(
+                ReminderLog.CAT_RING,
+                "响铃服务启动失败（${e.javaClass.simpleName}）→ 改试直接拉起闹钟页",
             )
             val alarmIntent = Intent(
                 context,

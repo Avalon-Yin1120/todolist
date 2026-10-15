@@ -42,7 +42,7 @@ import com.avalonyin1120.todolist.ui.TAG_WEEKDAY_PREFIX
 import com.avalonyin1120.todolist.ui.TAG_SETTINGS_BUTTON
 import com.avalonyin1120.todolist.ui.TAG_SETTINGS_BACK
 import com.avalonyin1120.todolist.ui.TAG_SETTINGS_SCREEN
-import com.avalonyin1120.todolist.ui.TAG_SETTING_ALARM
+import com.avalonyin1120.todolist.ui.TAG_DEFAULT_MODE_PREFIX
 import com.avalonyin1120.todolist.ui.TAG_SETTING_NOTIFICATION_SOUND
 import com.avalonyin1120.todolist.ui.TAG_OPEN_ABOUT
 import com.avalonyin1120.todolist.ui.TAG_OPEN_PRIVACY
@@ -128,7 +128,8 @@ class TodoListUiTest {
         }
         graph.settings.lastLeadMinutes = 0
         // 与产品默认保持一致：默认走通知式（闹钟式要显式打开）
-        graph.settings.useAlarmForReminders = false
+        graph.settings.defaultReminderMode =
+            com.avalonyin1120.todolist.domain.ReminderMode.NOTIFICATION
         graph.settings.confirmBeforeDelete = true
         graph.settings.warnOnOverlap = true
         graph.settings.notificationSound = true
@@ -636,7 +637,7 @@ class TodoListUiTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithText("设置").assertIsDisplayed()
-        composeRule.onNodeWithTag(TAG_SETTING_ALARM).assertIsDisplayed()
+        composeRule.onNodeWithTag(TAG_DEFAULT_MODE_PREFIX + "NOTIFICATION").assertIsDisplayed()
 
         composeRule.onNodeWithTag(TAG_SETTINGS_BACK).performClick()
         composeRule.waitForIdle()

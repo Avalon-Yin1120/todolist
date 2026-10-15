@@ -281,4 +281,195 @@ class ReminderHealthTest {
         // 候选链里的渠道页可能起不来，必须静默退到下一级，而不是把异常抛给界面。
         ReminderHealth.openChannelSettings(context, "this_channel_does_not_exist")
     }
+
+    // -----------------------------------------------------------------------
+    // 「照着做」的清单：文案与计数（这一页的全部业务逻辑都在这两件事上）
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `OPPO 的四条就是用户给的原文`() {
+        // 用户是拿 OPPO 真机反馈的，这四条路径是他在系统里逐条核对过的。
+        // 「顺手把文案写顺一点」等于把用户验证过的信息改掉，所以逐字钉住。
+        val oem = ReminderHealth.sections(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+            .first { it.title.startsWith("你的手机") }
+
+        assertThat(oem.steps.map { it.title }).containsExactly(
+            "打开锁屏和横幅通知",
+            "关掉静默通知",
+            "允许后台弹出界面和发送全屏通知",
+            "允许完全后台行为",
+        ).inOrder()
+        assertThat(oem.steps.map { it.path }).containsExactly(
+            "应用详情 → 通知管理 → 锁屏和横幅打勾",
+            "应用详情 → 通知管理 → 待办提醒（有声）和闹钟式提醒 → 静默通知（关掉）",
+            "应用详情 → 权限管理 → 其他权限 / 特殊应用权限 → 后台弹出界面 和 发送全屏通知（允许）",
+            "应用详情 → 耗电管理 → 完全允许后台行为",
+        ).inOrder()
+    }
+
+    @Test
+    fun `每条都有能照着走的一行路径`() {
+        // 文案原则（用户反馈「字太多、术语太多」）：每条只要一句标题 + 一行路径，
+        // 而且路径必须是「点哪里」的箭头写法，不能夹带 importance / 渠道这类机制词。
+        ReminderHealth.PhoneBrand.entries.forEach { brand ->
+            ReminderHealth.steps(brand, alarmModeInUse = true).forEach { step ->
+                assertThat(step.path).contains("→")
+                assertThat(step.title).doesNotContain("importance")
+                assertThat(step.title).doesNotContain("渠道")
+            }
+        }
+    }
+
+    @Test
+    fun `非 OPPO 的每个品牌都有自己的一组路径`() {
+        // 用户只给了 OPPO 的路径，其余按经验写：每个品牌至少要凑齐「锁屏横幅 / 静默 / 后台」
+        // 这几件必须做的事，否则用户照着做还是会漏。
+        listOf(
+            ReminderHealth.PhoneBrand.XIAOMI,
+            ReminderHealth.PhoneBrand.HUAWEI,
+            ReminderHealth.PhoneBrand.VIVO,
+            ReminderHealth.PhoneBrand.OTHER,
+        ).forEach { brand ->
+            val oem = ReminderHealth.sections(brand, alarmModeInUse = false).first().steps
+            assertThat(oem.map { it.id }).contains(ReminderHealth.STEP_LOCKSCREEN_BANNER)
+            assertThat(oem.map { it.id }).contains(ReminderHealth.STEP_SILENT_OFF)
+            assertThat(oem.map { it.id }).contains(ReminderHealth.STEP_BATTERY)
+            // 这一组的开关系统读不到（或读数被真机证伪过）：整组都不许带 autoCheck，
+            // 否则就是拿一个读不准的值替系统报状态——那正是这次要修掉的误报。
+            assertThat(oem.all { it.autoCheck == null }).isTrue()
+        }
+    }
+
+    @Test
+    fun `读不到状态的条一个字都不显示`() {
+        val states = ReminderHealth.SystemStates(true, true, true, true)
+        val steps = ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+
+        // 锁屏横幅、静默通知：渠道读数在真机上被证伪过（见本文件上半部分），因此不显示任何状态
+        assertThat(
+            ReminderHealth.statusHint(
+                steps.first { it.id == ReminderHealth.STEP_LOCKSCREEN_BANNER }, states,
+            ),
+        ).isNull()
+        assertThat(
+            ReminderHealth.statusHint(steps.first { it.id == ReminderHealth.STEP_SILENT_OFF }, states),
+        ).isNull()
+
+        // 「后台弹出界面和发送全屏通知」里读得到的只有后半句，提示必须点明是哪一个开关，
+        // 否则用户会把它当成整条（含读不到的「后台弹出界面」）的结论。
+        assertThat(
+            ReminderHealth.statusHint(
+                steps.first { it.id == ReminderHealth.STEP_BACKGROUND_POPUP }, states,
+            ),
+        ).contains("发送全屏通知")
+    }
+
+    @Test
+    fun `读得到的项系统里已允许就不算未完成`() {
+        val steps = ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+        val allAllowed = ReminderHealth.SystemStates(true, true, true, true)
+
+        // 系统里全部已允许、用户一条都没勾：只剩「读不到状态」的条需要用户确认。
+        // 这就是「以用户确认为准」的另一半——读得到的项不该再催用户去勾。
+        assertThat(ReminderHealth.pendingStepCount(steps, allAllowed, emptySet()))
+            .isEqualTo(steps.count { it.autoCheck == null })
+    }
+
+    @Test
+    fun `用户勾了就不再算未完成`() {
+        val steps = ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+        val nothingAllowed = ReminderHealth.SystemStates(false, false, false, false)
+
+        // 系统里读什么都说不允许、用户也没勾：全部条目都算未完成
+        assertThat(ReminderHealth.pendingStepCount(steps, nothingAllowed, emptySet()))
+            .isEqualTo(steps.size)
+        // 全勾上之后必须归零：这正是用户自确认的意义——顶部那句「还有 N 项」要能真的消失，
+        // 不再出现「改完回来还是红的」（渠道一旦创建，应用自己改不动，旧实现因此永远消不掉）
+        assertThat(
+            ReminderHealth.pendingStepCount(steps, nothingAllowed, steps.map { it.id }.toSet()),
+        ).isEqualTo(0)
+        // 只勾一条时，只免除那一条，其余的照旧
+        assertThat(
+            ReminderHealth.pendingStepCount(
+                steps, nothingAllowed, setOf(ReminderHealth.STEP_LOCKSCREEN_BANNER),
+            ),
+        ).isEqualTo(steps.size - 1)
+    }
+
+    @Test
+    fun `用户确认优先于系统读数`() {
+        val steps = ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+        val states = ReminderHealth.SystemStates(
+            notifications = false,
+            exactAlarm = true,
+            fullScreenIntent = true,
+            batteryUnrestricted = true,
+        )
+        val step = steps.first { it.id == ReminderHealth.STEP_ALLOW_NOTIFICATIONS }
+
+        // 通知权限系统里读回「未允许」：没确认时算未完成
+        assertThat(ReminderHealth.isStepPending(step, states, emptySet())).isTrue()
+        // 用户确认自己去开过了（例如授权对话框没弹出来、或 ROM 读数偏保守）：以用户为准，
+        // 不能反过来一直顶着用户说「没开」——那是同一类误报的另一个方向
+        assertThat(
+            ReminderHealth.isStepPending(step, states, setOf(ReminderHealth.STEP_ALLOW_NOTIFICATIONS)),
+        ).isFalse()
+    }
+
+    @Test
+    fun `只有闹钟式才需要精确闹钟与全屏通知这两条`() {
+        // 通知式提醒既不弹整屏页面也不要求精确闹钟：列出来等于让用户去开一个用不到的开关，
+        // 而且计数会永远差一项（用户永远清不掉）。
+        assertThat(
+            ReminderHealth.steps(ReminderHealth.PhoneBrand.XIAOMI, alarmModeInUse = false).map { it.id },
+        ).containsNoneOf(ReminderHealth.STEP_EXACT_ALARM, ReminderHealth.STEP_FULL_SCREEN_INTENT)
+        assertThat(
+            ReminderHealth.steps(ReminderHealth.PhoneBrand.XIAOMI, alarmModeInUse = true).map { it.id },
+        ).containsAtLeast(ReminderHealth.STEP_EXACT_ALARM, ReminderHealth.STEP_FULL_SCREEN_INTENT)
+        // OPPO 那条已经把这个开关写进路径里，系统权限组不再重复列一条（重复就是冗余）
+        assertThat(
+            ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true).map { it.id },
+        ).doesNotContain(ReminderHealth.STEP_FULL_SCREEN_INTENT)
+    }
+
+    @Test
+    fun `每个品牌的清单里 id 不重复`() {
+        // id 就是持久化的键（用户的勾选存的是它）：同一份清单里重复，勾一条等于勾两条
+        ReminderHealth.PhoneBrand.entries.forEach { brand ->
+            assertThat(ReminderHealth.steps(brand, alarmModeInUse = true).map { it.id })
+                .containsNoDuplicates()
+        }
+    }
+
+    @Test
+    fun `按品牌与厂商名认出该看哪一组`() {
+        // 分组只决定显示哪一套路径，判错的代价是用户看到别的厂商的叫法（路径本身也标了经验值）
+        assertThat(ReminderHealth.brandOf("OPPO", "OPPO")).isEqualTo(ReminderHealth.PhoneBrand.OPPO)
+        assertThat(ReminderHealth.brandOf("realme", "realme")).isEqualTo(ReminderHealth.PhoneBrand.OPPO)
+        assertThat(ReminderHealth.brandOf("OnePlus", "OnePlus")).isEqualTo(ReminderHealth.PhoneBrand.OPPO)
+        assertThat(ReminderHealth.brandOf("Redmi", "Xiaomi")).isEqualTo(ReminderHealth.PhoneBrand.XIAOMI)
+        assertThat(ReminderHealth.brandOf("HONOR", "HONOR")).isEqualTo(ReminderHealth.PhoneBrand.HUAWEI)
+        assertThat(ReminderHealth.brandOf("vivo", "vivo")).isEqualTo(ReminderHealth.PhoneBrand.VIVO)
+        assertThat(ReminderHealth.brandOf("iQOO", "vivo")).isEqualTo(ReminderHealth.PhoneBrand.VIVO)
+        assertThat(ReminderHealth.brandOf("google", "Google")).isEqualTo(ReminderHealth.PhoneBrand.OTHER)
+        // 品牌字段为空（个别 ROM 会这样）也要有个安全的分组，不能崩
+        assertThat(ReminderHealth.brandOf("", "")).isEqualTo(ReminderHealth.PhoneBrand.OTHER)
+    }
+
+    @Test
+    fun `状态提示与系统读数一致`() {
+        val step = ReminderHealth.steps(ReminderHealth.PhoneBrand.OPPO, alarmModeInUse = true)
+            .first { it.id == ReminderHealth.STEP_BATTERY }
+
+        assertThat(
+            ReminderHealth.statusHint(
+                step, ReminderHealth.SystemStates(false, false, false, batteryUnrestricted = false),
+            ),
+        ).contains("未允许")
+        assertThat(
+            ReminderHealth.statusHint(
+                step, ReminderHealth.SystemStates(false, false, false, batteryUnrestricted = true),
+            ),
+        ).contains("已允许")
+    }
 }

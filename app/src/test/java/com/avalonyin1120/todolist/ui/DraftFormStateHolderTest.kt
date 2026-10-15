@@ -154,6 +154,68 @@ class DraftFormStateHolderTest {
         assertThat(holder.state.value.leadInput).isEmpty()
     }
 
+    // ---------------------------------------------------------- 新建时的默认提醒方式
+
+    /**
+     * 设置页把「默认提醒方式」换成了三选一，表单这一层就靠 [DraftFormStateHolder] 的
+     * `defaultMode` 回调把这个档位带进来。三档都要走一遍：只测「能带出闹钟式」
+     * 的话，`defaultMode` 被写成 `if (x) ALARM else NOTIFICATION` 也照样过，
+     * 而「默认不通知」正是这次要支持的诉求。
+     */
+    @Test
+    fun `新建时三档默认提醒方式都能带出来`() {
+        ReminderMode.entries.forEach { mode ->
+            val holder = DraftFormStateHolder(clock = clock, defaultMode = { mode })
+
+            holder.open()
+
+            assertThat(holder.state.value.mode).isEqualTo(mode)
+        }
+    }
+
+    @Test
+    fun `默认档是不通知时也能新建且不校验提前量`() {
+        // 用户把默认档设成「不通知」，新建时表单里提前量整块是隐藏的：
+        // 这一档必须能存下去，不能因为一个看不见的字段把人卡住
+        val holder = DraftFormStateHolder(clock = clock, defaultMode = { ReminderMode.NONE })
+        holder.open()
+        holder.setName("只做记录")
+
+        assertThat(holder.validate()).isEmpty()
+
+        val draft = holder.toDraft()
+        assertThat(draft.mode).isEqualTo(ReminderMode.NONE)
+        assertThat(draft.leadMinutes).isEqualTo(0)
+    }
+
+    @Test
+    fun `编辑已有项时不用默认档而用待办自己的档`() {
+        // 设置里的默认档只作用于「新建」；编辑时如果被它顶掉，
+        // 用户打开一条「只作记录」的待办再保存，就会莫名其妙变成响铃提醒
+        val holder = DraftFormStateHolder(clock = clock, defaultMode = { ReminderMode.ALARM })
+
+        holder.open(mode = ReminderMode.NONE)
+
+        assertThat(holder.state.value.mode).isEqualTo(ReminderMode.NONE)
+    }
+
+    @Test
+    fun `从默认档是不通知切到通知时先前填过的提前量不会被吞掉`() {
+        // 「不通知」档下用户看不到提前量输入框，切回来时必须还是原样。
+        // 这里连「默认档就是 NONE」这条路径一起钉住：新建 → 切档 → 值还在。
+        val holder = DraftFormStateHolder(clock = clock, defaultMode = { ReminderMode.NONE })
+        holder.open()
+        holder.setName("会议")
+        holder.setLeadMinutes(45)
+        assertThat(holder.state.value.mode).isEqualTo(ReminderMode.NONE)
+
+        holder.setMode(ReminderMode.NOTIFICATION)
+
+        assertThat(holder.state.value.leadMinutes).isEqualTo(45)
+        assertThat(holder.state.value.leadInput).isEqualTo("45")
+        assertThat(holder.validate()).isEmpty()
+    }
+
     @Test
     fun `名称为空时校验失败`() {
         form.open()

@@ -97,6 +97,7 @@ object AlarmRinger {
         // 迟到的启动：这条待办的闹钟刚刚才被用户结束（详见 [wasRecentlyStopped]）
         if (wasRecentlyStopped(todoId, alarmId)) {
             Log.i(TAG, "这条待办的闹钟刚刚已被结束，不再起铃：todo=$todoId")
+            ReminderLog.add(ReminderLog.CAT_RING, "不再起铃：这次闹钟刚被用户关掉（todo=$todoId）")
             return
         }
         if (isRinging && ringingTodoId == todoId) {
@@ -156,6 +157,7 @@ object AlarmRinger {
         if (bundled != null && bundled.isPlaying) {
             player = bundled
             Log.i(TAG, "闹钟开始响铃（内置音频）：todo=$ringingTodoId")
+            ReminderLog.add(ReminderLog.CAT_RING, "用内置音频开始响铃（todo=$ringingTodoId）")
             return
         }
         runCatching { bundled?.release() }
@@ -165,6 +167,7 @@ object AlarmRinger {
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         if (uri == null) {
             Log.e(TAG, "内置音频与系统提示音都不可用，本次只靠闹钟页与通知：todo=$ringingTodoId")
+            ReminderLog.add(ReminderLog.CAT_RING, "⚠ 内置音频与系统提示音都不可用，本次没有声音")
             return
         }
         ringtone = RingtoneManager.getRingtone(app, uri)?.apply {
@@ -176,6 +179,7 @@ object AlarmRinger {
                 .onFailure { Log.e(TAG, "播放系统闹钟铃声失败：${it.message}") }
         }
         Log.i(TAG, "闹钟开始响铃（系统铃声兜底）：todo=$ringingTodoId")
+        ReminderLog.add(ReminderLog.CAT_RING, "内置音频不可用，退回系统闹钟铃声（todo=$ringingTodoId）")
     }
 
     /** 立即静音。可重复调用；没有在响时是空操作。 */
@@ -201,7 +205,10 @@ object AlarmRinger {
             recentlyStoppedAlarmId = alarm
             recentlyStoppedAt = SystemClock.elapsedRealtime()
         }
-        if (had || wasRinging) Log.i(TAG, "闹钟停止响铃：todo=$todo")
+        if (had || wasRinging) {
+            Log.i(TAG, "闹钟停止响铃：todo=$todo")
+            ReminderLog.add(ReminderLog.CAT_STOP, "停止响铃（todo=$todo）")
+        }
     }
 
     /**

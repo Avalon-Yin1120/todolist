@@ -14,7 +14,6 @@ import com.avalonyin1120.todolist.data.TodoRepository
 import com.avalonyin1120.todolist.domain.Clock
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.Recurrence
-import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.Todo
 import com.avalonyin1120.todolist.domain.WeekWindow
 import com.avalonyin1120.todolist.reminder.SchedulingCoordinator
@@ -34,7 +33,7 @@ import java.time.ZoneId
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
 /** 顶层界面：主界面、设置页、表单页与两个说明页。 */
-enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH, ABOUT, PRIVACY }
+enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH, ABOUT, PRIVACY, REMINDER_LOG }
 
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
@@ -112,6 +111,8 @@ data class TodoUiState(
      * 且（应用开着提示音时）没有被系统判成静默通知。
      */
     val notificationChannelOk: Boolean = true,
+    /** 用户在检查页亲手勾过的「我已设置好」项 id 集合（见 SettingsUiState.confirmedHealthItems） */
+    val confirmedHealthSteps: Set<String> = emptySet(),
     /** 当前是不是需要额外开「自启动」的国产 ROM（只影响提示文案） */
     val needsOemBackgroundGuide: Boolean = false,
     val settings: SettingsUiState = SettingsUiState(),
@@ -167,9 +168,9 @@ class TodoViewModel(
     val form = DraftFormStateHolder(
         clock = clock,
         rememberedLeadMinutes = { settings.lastLeadMinutes },
-        defaultMode = {
-            if (settings.useAlarmForReminders) ReminderMode.ALARM else ReminderMode.NOTIFICATION
-        },
+        // 新建待办时用设置里选定的那一档预填；编辑时调用方会传待办自己的档，
+        // 因此这里只影响「新建」（见 DraftFormStateHolder.open 的 mode 参数）。
+        defaultMode = { settings.defaultReminderMode },
     )
 
     private val editState = MutableStateFlow(EditState())
@@ -208,6 +209,7 @@ class TodoViewModel(
             canPostNotifications = local.canPostNotifications,
             fullScreenIntentAllowed = local.fullScreenIntentAllowed,
             notificationChannelOk = local.notificationChannelOk,
+            confirmedHealthSteps = local.settings.confirmedHealthItems,
             needsOemBackgroundGuide = local.needsOemBackgroundGuide,
             oneOffEdit = edit.oneOffSourceId != 0L,
             formOpen = edit.isOpen,
@@ -562,7 +564,7 @@ class TodoViewModel(
 
     fun changeSetting(change: SettingsChange) {
         when (change) {
-            is SettingsChange.UseAlarm -> settings.useAlarmForReminders = change.value
+            is SettingsChange.DefaultMode -> settings.defaultReminderMode = change.value
             is SettingsChange.ConfirmDelete -> settings.confirmBeforeDelete = change.value
             is SettingsChange.WarnOverlap -> settings.warnOnOverlap = change.value
             is SettingsChange.NotificationSound -> settings.notificationSound = change.value
@@ -584,7 +586,7 @@ class TodoViewModel(
     }
 
     private fun readSettings() = SettingsUiState(
-        useAlarmForReminders = settings.useAlarmForReminders,
+        defaultReminderMode = settings.defaultReminderMode,
         confirmBeforeDelete = settings.confirmBeforeDelete,
         warnOnOverlap = settings.warnOnOverlap,
         lastLeadMinutes = settings.lastLeadMinutes,
@@ -646,6 +648,17 @@ class TodoViewModel(
 
     /** 关闭「提醒可靠性检查」页，回到进入它的那一页。 */
     fun closeReminderHealth() = updateLocal { it.copy(screen = it.healthReturnScreen) }
+
+    /**
+     * 打开「提醒诊断日志」。
+     *
+     * 返回目标固定是检查页而不是「进来的那一页」：用户是从检查页点进来的
+     * （「到点没响」→ 检查项 → 看日志），看完日志最自然的下一步是回到那一串清单继续核对，
+     * 而不是被丢回设置或主界面。
+     */
+    fun openReminderLog() = updateLocal { it.copy(screen = Screen.REMINDER_LOG) }
+
+    fun closeReminderLog() = updateLocal { it.copy(screen = Screen.REMINDER_HEALTH) }
 
     /** 打开「关于待办提醒」页。 */
     fun openAbout() = updateLocal { it.copy(screen = Screen.ABOUT) }

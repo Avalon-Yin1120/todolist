@@ -109,6 +109,7 @@ class AlarmRingService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != Intent.ACTION_SCREEN_OFF) return
             Log.i(TAG, "屏幕已熄灭（锁屏键），停止响铃并退出服务")
+            ReminderLog.add(ReminderLog.CAT_STOP, "用户按了锁屏键（熄灭屏幕）→ 停止响铃")
             AlarmRinger.stop()
             stopSelf()
         }
@@ -144,11 +145,36 @@ class AlarmRingService : Service() {
                 "音量流 $changed 从 ${volumeAtStart[changed]} 变成 " +
                     "${audio.getStreamVolume(changed)}（用户按了音量键），停止响铃并退出服务",
             )
+            ReminderLog.add(ReminderLog.CAT_STOP, "用户按了音量键（stream=$changed 有变化）→ 停止响铃")
             AlarmRinger.stop()
             stopSelf()
         }
     }
     private var volumeObserverRegistered = false
+
+    /**
+     * 音量键的**第二条**监听：系统在音量变化时会发 `android.media.VOLUME_CHANGED_ACTION`
+     * 广播（受保护广播，只有系统能发，但**运行时注册可以收到**），并且直接带
+     * 「哪个流、变成多少」。
+     *
+     * 为什么不能只靠 [volumeObserver]：用户真机反馈「按音量键依旧关不掉」，
+     * 而我们监听 `Settings.System` 的具体键 URI 时用了 `notifyForDescendants = false`，
+     * 系统其实是按**表 URI**通知的 —— 那条观察者很可能一次都没触发过。
+     * 广播这条不依赖 SettingsProvider 的通知语义，所以两条都留着，谁先到算谁。
+     */
+    private val volumeChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_VOLUME_CHANGED) return
+            val stream = intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, -1)
+            val value = intent.getIntExtra(EXTRA_VOLUME_STREAM_VALUE, -1)
+            if (stream !in WATCHED_STREAMS) return
+            Log.i(TAG, "收到音量变化广播：stream=$stream value=$value（用户按了音量键），停止响铃并退出服务")
+            ReminderLog.add(ReminderLog.CAT_STOP, "用户按了音量键（stream=$stream）→ 停止响铃")
+            AlarmRinger.stop()
+            stopSelf()
+        }
+    }
+    private var volumeChangedRegistered = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val todoId = intent?.getLongExtra(EXTRA_TODO_ID, AlarmRinger.NO_TODO) ?: AlarmRinger.NO_TODO
@@ -160,6 +186,7 @@ class AlarmRingService : Service() {
         // 真机实测这种情况能晚十几秒——如果不挡掉，用户会遇到「明明关了，过一会儿又响」。
         if (AlarmRinger.wasRecentlyStopped(todoId, alarmId)) {
             Log.i(TAG, "这条待办的闹钟刚刚已被结束，忽略迟到的启动：todo=$todoId")
+            ReminderLog.add(ReminderLog.CAT_RING, "忽略迟到的启动（刚被用户关掉）：todo=$todoId")
             // startForegroundService 起的服务必须转到前台，否则系统会判「未及时转前台」；
             // 转完立刻退出即可。
             startForeground(NOTIFICATION_ID, buildNotification(todoId, name, alarmId))
@@ -171,8 +198,10 @@ class AlarmRingService : Service() {
         acquireWakeLock()
         registerScreenOff()
         registerVolumeObserver()
+        registerVolumeChangedReceiver()
 
         // 开始响铃。同一条待办的重复投递由 AlarmRinger 自己识别，不会打断也不会叠加。
+        ReminderLog.add(ReminderLog.CAT_RING, "响铃服务已在前台运行，开始响铃：todo=$todoId")
         AlarmRinger.start(this, todoId, alarmId)
 
         // 每次投递都把超时重新计一遍
@@ -202,6 +231,7 @@ class AlarmRingService : Service() {
     override fun onDestroy() {
         unregisterScreenOff()
         unregisterVolumeObserver()
+        unregisterVolumeChangedReceiver()
         handler.removeCallbacks(stopWhenNoClient)
         handler.removeCallbacks(autoStop)
         AlarmRinger.stop()
@@ -240,16 +270,17 @@ class AlarmRingService : Service() {
         if (volumeObserverRegistered) return
         val audio = getSystemService(android.media.AudioManager::class.java) ?: return
         volumeAtStart.clear()
-        // 每个流注册一次观察者；Settings.System 的键名是 AOSP 里固定的那套字符串
+        WATCHED_STREAMS.forEach { stream -> volumeAtStart[stream] = audio.getStreamVolume(stream) }
         volumeObserverRegistered = runCatching {
-            WATCHED_STREAMS.forEach { stream ->
-                volumeAtStart[stream] = audio.getStreamVolume(stream)
-                contentResolver.registerContentObserver(
-                    android.provider.Settings.System.getUriFor(volumeKeyOf(stream)),
-                    false,
-                    volumeObserver,
-                )
-            }
+            // 注册**一次**，挂在表 URI 上并开启「后代通知」：
+            // 系统是按 content://settings/system 这张表通知的，监听具体键 URI
+            // 且 notifyForDescendants = false 时观察者收不到任何回调（真机上就是这么漏掉的）。
+            // 回调里自己逐个读流并和起铃时的快照比，因此挂表 URI 也不会误判。
+            contentResolver.registerContentObserver(
+                android.provider.Settings.System.CONTENT_URI,
+                true,
+                volumeObserver,
+            )
             true
         }.onFailure { Log.w(TAG, "注册音量监听失败：${it.message}") }.getOrDefault(false)
     }
@@ -261,17 +292,23 @@ class AlarmRingService : Service() {
         volumeAtStart.clear()
     }
 
-    /**
-     * 音量流 → `Settings.System` 键名。
-     *
-     * 这些字符串在 AOSP 的 `Settings.System.VOLUME_SETTINGS`（隐藏字段）里就是这样写的，
-     * 用字面量是为了不依赖隐藏 API。
-     */
-    private fun volumeKeyOf(stream: Int): String = when (stream) {
-        android.media.AudioManager.STREAM_ALARM -> "volume_alarm"
-        android.media.AudioManager.STREAM_MUSIC -> "volume_music"
-        android.media.AudioManager.STREAM_RING -> "volume_ring"
-        else -> "volume_notification"
+    /** 注册 [volumeChangedReceiver]（与观察者互补，见它的注释）。 */
+    private fun registerVolumeChangedReceiver() {
+        if (volumeChangedRegistered) return
+        volumeChangedRegistered = runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                this,
+                volumeChangedReceiver,
+                IntentFilter(ACTION_VOLUME_CHANGED),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }.onFailure { Log.w(TAG, "注册音量变化广播失败：${it.message}") }.isSuccess
+    }
+
+    private fun unregisterVolumeChangedReceiver() {
+        if (!volumeChangedRegistered) return
+        runCatching { unregisterReceiver(volumeChangedReceiver) }
+        volumeChangedRegistered = false
     }
 
     // ---------------------------------------------------------------- 唤醒锁
@@ -338,19 +375,9 @@ class AlarmRingService : Service() {
     }
 
     private fun ensureChannel() {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
-        val manager = getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.alarm_channel_name),
-            // 前台服务通知必须能显示，用 LOW 避免它自己再响一次
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = getString(R.string.alarm_channel_desc)
-            setShowBadge(false)
-        }
-        manager.createNotificationChannel(channel)
+        // 渠道的创建参数集中在这里与 NotificationHelper.ensureAlarmRingChannel 一处，
+        // 两处都调同一个伴生函数，避免「启动时建的」与「响铃时建的」参数不一致
+        ensureAlarmRingChannel(this)
     }
 
     companion object {
@@ -394,6 +421,11 @@ class AlarmRingService : Service() {
          * 听多个流是必要的：音量键调整哪一路取决于当时谁在出声，而不同 ROM 对这个判断不一样
          * （闹钟音量已满时有的 ROM 会转而调整 media 流）。
          */
+        /** 系统在音量变化时发的受保护广播（运行时注册可收）。 */
+        const val ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"
+        const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
+        const val EXTRA_VOLUME_STREAM_VALUE = "android.media.EXTRA_VOLUME_STREAM_VALUE"
+
         private val WATCHED_STREAMS = listOf(
             android.media.AudioManager.STREAM_ALARM,
             android.media.AudioManager.STREAM_MUSIC,
@@ -403,6 +435,35 @@ class AlarmRingService : Service() {
 
         /** 解绑后的宽限期：给配置变更（旋转）留出重新绑定的时间。 */
         private const val UNBIND_GRACE_MS = 600L
+
+        /**
+         * 建/取「闹钟式提醒」这条通知渠道（响铃时常驻通知用）。
+         *
+         * 为什么要在**应用启动时**就建：用户反馈「系统设置的类别里，闹钟式提醒只有响过一遍闹钟后
+         * 才出现」。那是本应用的行为——这条渠道原先只在响铃服务起来时才创建，
+         * 于是用户在出事之前根本看不到、也改不了它。现在 `TodoApp.onCreate` 就会创建。
+         *
+         * 重要性用 DEFAULT 而不是 LOW：LOW 在系统的类别页里会显示成「静默」，
+         * 与「引导用户关掉静默通知」的说法自相矛盾；DEFAULT + 不给声音 = 有通知但不吵。
+         */
+        fun ensureAlarmRingChannel(context: Context) {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                context.getString(R.string.alarm_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = context.getString(R.string.alarm_channel_desc)
+                setShowBadge(false)
+                // 不出声也不振动：真正的铃声由 AlarmRinger 用自己的音频播放，
+                // 这里只是响铃期间那条「正在响铃」的常驻通知
+                setSound(null, null)
+                enableVibration(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
 
         /** 启动闹钟服务。 */
         fun start(context: Context, todoId: Long, name: String, alarmId: Long = AlarmRinger.NO_TODO) {

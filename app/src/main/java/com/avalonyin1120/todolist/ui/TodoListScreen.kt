@@ -70,6 +70,7 @@ import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.ReminderTime
 import com.avalonyin1120.todolist.domain.Todo
+import com.avalonyin1120.todolist.sys.ReminderHealth
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -152,6 +153,7 @@ fun TodoRoute(
         when (screen) {
             Screen.FORM -> viewModel.dismissForm()
             Screen.SETTINGS -> viewModel.closeSettings()
+            Screen.REMINDER_LOG -> viewModel.closeReminderLog()
             Screen.REMINDER_HEALTH -> viewModel.closeReminderHealth()
             Screen.ABOUT -> viewModel.closeAbout()
             Screen.PRIVACY -> viewModel.closePrivacy()
@@ -231,7 +233,8 @@ fun TodoRoute(
                     batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
                     fullScreenIntentAllowed = uiState.fullScreenIntentAllowed,
                     needsOemBackgroundGuide = uiState.needsOemBackgroundGuide,
-                    alarmModeInUse = settings.useAlarmForReminders ||
+                    // 「当前是否在用闹钟式」= 新建默认档选了闹钟式，或已有未完成的闹钟式待办
+                    alarmModeInUse = settings.defaultReminderMode == ReminderMode.ALARM ||
                         uiState.todos.any {
                             it.mode == ReminderMode.ALARM &&
                                 !RecurrenceExpander.asListEntry(it, zone).isDone
@@ -241,7 +244,10 @@ fun TodoRoute(
                     onRequestIgnoreBatteryOptimization =
                         viewModel::requestIgnoreBatteryOptimization,
                     onBack = viewModel::closeReminderHealth,
+                    onOpenReminderLog = viewModel::openReminderLog,
                 )
+
+                Screen.REMINDER_LOG -> ReminderLogScreen(onBack = viewModel::closeReminderLog)
 
                 Screen.MAIN -> TodoListScreen(
                     uiState = uiState,
@@ -284,6 +290,7 @@ private fun screenDepth(screen: Screen): Int = when (screen) {
     Screen.SETTINGS, Screen.FORM -> 1
     Screen.ABOUT, Screen.PRIVACY -> 2
     Screen.REMINDER_HEALTH -> 3
+    Screen.REMINDER_LOG -> 4
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -370,6 +377,7 @@ fun TodoListScreen(
                 canPostNotifications = uiState.canPostNotifications,
                 batteryOptimizationIgnored = uiState.batteryOptimizationIgnored,
                 notificationChannelOk = uiState.notificationChannelOk,
+                confirmedHealthSteps = uiState.confirmedHealthSteps,
                 onOpenReminderHealth = onOpenReminderHealth,
             )
 
@@ -1006,15 +1014,23 @@ private fun PermissionBanner(
     canPostNotifications: Boolean,
     batteryOptimizationIgnored: Boolean,
     notificationChannelOk: Boolean,
+    confirmedHealthSteps: Set<String>,
     onOpenReminderHealth: () -> Unit,
 ) {
     // 通知样式（静默 / 横幅 / 锁屏）也算一项：只提示「通知权限没开」是不够的，
     // 权限开着但被系统判成静默通知时，用户同样收不到会飘出来的提醒。
+    //
+    // 「或已确认」这一半很关键：这几个开关里有的应用根本读不到（锁屏/横幅/静默这类渠道细节），
+    // 检查页因此允许用户亲手勾「我已设置好」。勾过之后这里必须跟着消失，
+    // 否则用户照着引导做完了，主界面还一直挂着「有 N 项未开启」。
     val missing = listOf(
-        canScheduleExact,
-        canPostNotifications,
-        batteryOptimizationIgnored,
-        notificationChannelOk,
+        canScheduleExact || confirmedHealthSteps.contains(ReminderHealth.STEP_EXACT_ALARM),
+        canPostNotifications || confirmedHealthSteps.contains(ReminderHealth.STEP_ALLOW_NOTIFICATIONS),
+        batteryOptimizationIgnored || confirmedHealthSteps.contains(ReminderHealth.STEP_BATTERY),
+        notificationChannelOk || (
+            confirmedHealthSteps.contains(ReminderHealth.STEP_LOCKSCREEN_BANNER) &&
+                confirmedHealthSteps.contains(ReminderHealth.STEP_SILENT_OFF)
+            ),
     ).count { !it }
     if (missing == 0) return
     Surface(

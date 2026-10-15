@@ -63,7 +63,7 @@ class TodoViewModelTest {
         settings = com.avalonyin1120.todolist.data.InMemorySettingsStore(
             // 默认用通知方式：这样「排定到非精确调度器」的断言才有意义。
             // 闹钟式路径由专门的用例覆盖。
-            useAlarmForReminders = false,
+            defaultReminderMode = ReminderMode.NOTIFICATION,
         )
         clock = FakeClock(now)
         coordinator = SchedulingCoordinator(
@@ -708,19 +708,74 @@ class TodoViewModelTest {
         settle()
 
         // 闹钟式会持续响铃并抢占屏幕，当默认值太吵；而且它依赖精确闹钟权限
-        assertThat(viewModel.uiState.value.settings.useAlarmForReminders).isFalse()
+        assertThat(viewModel.uiState.value.settings.defaultReminderMode)
+            .isEqualTo(ReminderMode.NOTIFICATION)
 
         // 新建表单的默认方式要跟着设置走（这里顺带验证设置确实驱动了表单）
         viewModel.openCreateForm()
         settle()
         assertThat(viewModel.form.state.value.mode).isEqualTo(ReminderMode.NOTIFICATION)
+    }
 
-        viewModel.dismissForm()
+    @Test
+    fun `设置里的默认提醒方式三档都能落库并读回`() = runTest(testDispatcher) {
         settle()
-        viewModel.changeSetting(SettingsChange.UseAlarm(true))
-        viewModel.openCreateForm()
+
+        // 三档都要能选中并记住：这一项以前是个布尔（闹钟式 / 非闹钟式），
+        // 「默认不通知」根本表达不出来，所以必须逐档验证而不是只测「打开闹钟式」。
+        ReminderMode.entries.forEach { mode ->
+            viewModel.changeSetting(SettingsChange.DefaultMode(mode))
+            settle()
+
+            // 界面状态要更新
+            assertThat(viewModel.uiState.value.settings.defaultReminderMode).isEqualTo(mode)
+            // 也必须落到设置存储里，而不只是改内存里的快照
+            assertThat(settings.defaultReminderMode).isEqualTo(mode)
+        }
+    }
+
+    @Test
+    fun `新建表单预先选中的提醒方式跟随设置的三档`() = runTest(testDispatcher) {
         settle()
-        assertThat(viewModel.form.state.value.mode).isEqualTo(ReminderMode.ALARM)
+
+        ReminderMode.entries.forEach { mode ->
+            viewModel.changeSetting(SettingsChange.DefaultMode(mode))
+            settle()
+
+            viewModel.openCreateForm()
+            settle()
+            assertThat(viewModel.form.state.value.mode).isEqualTo(mode)
+
+            viewModel.dismissForm()
+            settle()
+        }
+    }
+
+    @Test
+    fun `编辑已有待办时用它自己的提醒方式而不是设置里的默认档`() = runTest(testDispatcher) {
+        settle()
+
+        // 设置里选「闹钟式」，但这条待办自己是「不通知」：编辑时不能被默认档顶掉，
+        // 否则用户一进表单再保存，就会把一条「只作记录」的待办改成响铃提醒。
+        viewModel.changeSetting(SettingsChange.DefaultMode(ReminderMode.ALARM))
+        settle()
+
+        val at = now + 30 * TestData.MINUTE
+        val todoId = repository.insert(
+            TestData.todo(
+                id = 0L,
+                name = "只作记录",
+                startAt = at,
+                endAt = at + 30 * TestData.MINUTE,
+                mode = ReminderMode.NONE,
+            )
+        )
+        settle()
+
+        viewModel.openEditForm(repository.findById(todoId)!!)
+        settle()
+
+        assertThat(viewModel.form.state.value.mode).isEqualTo(ReminderMode.NONE)
     }
 
     @Test

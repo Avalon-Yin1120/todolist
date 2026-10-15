@@ -44,11 +44,23 @@ open class TodoApp : Application(), Configuration.Provider {
         super.onCreate()
         installGraph(createGraph())
         graph.notificationHelper.ensureChannel()
+        // 诊断日志要在任何提醒活动之前准备好：它同时读回上次落盘的内容，
+        // 于是「上次被系统杀掉之前发生了什么」也能看到
+        com.avalonyin1120.todolist.notify.ReminderLog.init(this)
+        com.avalonyin1120.todolist.notify.ReminderLog.add(
+            com.avalonyin1120.todolist.notify.ReminderLog.CAT_SYSTEM,
+            "应用启动（版本 ${BuildConfig.VERSION_NAME}，API ${android.os.Build.VERSION.SDK_INT}，" +
+                "厂商 ${android.os.Build.MANUFACTURER}）",
+        )
 
         // 启动时对账一次：覆盖「重启后 AlarmManager 被清空」「系统时间被改」等情况。
         // 失败不影响 App 启动（例如数据库被占用），下一次开机/启动会再对账。
         scope.launch {
-            runCatching { graph.coordinator.reconcileAll() }
+            val scheduled = runCatching { graph.coordinator.reconcileAll() }.getOrNull()
+            com.avalonyin1120.todolist.notify.ReminderLog.add(
+                com.avalonyin1120.todolist.notify.ReminderLog.CAT_SYSTEM,
+                "启动对账：重新排定 $scheduled 条提醒",
+            )
         }
     }
 

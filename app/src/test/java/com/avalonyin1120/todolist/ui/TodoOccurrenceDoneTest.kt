@@ -7,6 +7,7 @@ import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.RecurrenceException
 import com.avalonyin1120.todolist.domain.RecurrenceExceptionKind
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
+import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.Todo
 import com.avalonyin1120.todolist.reminder.SchedulingCoordinator
 import com.avalonyin1120.todolist.testing.FakeClock
@@ -59,7 +60,8 @@ class TodoOccurrenceDoneTest {
         work = FakeReminderScheduler("work")
         val permission = FakeExactAlarmPermission(granted = true)
         clock = FakeClock(TestData.NOW)
-        val settings = InMemorySettingsStore(useAlarmForReminders = false)
+        // 默认走通知式：闹钟式要精确闹钟权限，会让这一批「按场次完成」的断言跑偏
+        val settings = InMemorySettingsStore(defaultReminderMode = ReminderMode.NOTIFICATION)
         val coordinator = SchedulingCoordinator(
             repository = repository,
             exactScheduler = exact,
