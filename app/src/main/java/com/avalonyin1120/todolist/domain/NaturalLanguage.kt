@@ -79,6 +79,12 @@ object NaturalLanguage {
         val monthDays: Set<Int> = emptySet(),
         val leadMinutes: Int = 0,
         val matched: List<String> = emptyList(),
+        /** 下面四个标记决定「回填时只改哪些字段」——没认出来的绝不能动。 */
+        val hasDate: Boolean = false,
+        val hasTime: Boolean = false,
+        val hasDuration: Boolean = false,
+        val hasRecurrence: Boolean = false,
+        val hasLead: Boolean = false,
         /** 是否因为「今天这个点已经过了」而自动挪到了明天（界面要说明，不能悄悄改）。 */
         val movedToTomorrow: Boolean = false,
     )
@@ -160,6 +166,49 @@ object NaturalLanguage {
         }
 
         // 3) 日期
+        // 3.0) 年份 / 月份偏移：「明年」「去年」「2027年」「下个月」
+        var yearDelta = 0
+        var monthDelta = 0
+        YEAR.find(rest)?.let { m ->
+            val word = m.groupValues[1]
+            yearDelta = when {
+                word == "前年" -> -2
+                word == "去年" -> -1
+                word == "今年" -> 0
+                word == "明年" -> 1
+                word == "后年" -> 2
+                else -> {
+                    val y = cnNumber(word.removeSuffix("年")) ?: currentYear(now, zone)
+                    y - currentYear(now, zone)
+                }
+            }
+            matched += word
+            rest = rest.removeRange(m.range)
+        }
+        MONTH_OFFSET.find(rest)?.let { m ->
+            monthDelta = when (m.value) {
+                "上个月" -> -1
+                "下下个月" -> 2
+                "下个月" -> 1
+                else -> 0
+            }
+            matched += m.value
+            rest = rest.removeRange(m.range)
+        }
+
+        // 「下个月 10 号」「明年 5 号」：光有日号、没有「X 月」。只在有年/月偏移时才认，
+        // 否则「10 号」这种孤立的日号会被误当成日期。
+        var bareDay: Int? = null
+        if ((yearDelta != 0 || monthDelta != 0) && !rest.contains("月")) {
+            BARE_DAY.find(rest)?.let { m ->
+                val d = cnNumber(m.groupValues[1])
+                if (d != null && d in 1..31) {
+                    bareDay = d
+                    matched += m.value
+                    rest = rest.removeRange(m.range)
+                }
+            }
+        }
         var explicitToday = false
         var dayOffset: Long? = null
         var date: LocalDate? = null
@@ -184,7 +233,8 @@ object NaturalLanguage {
                 val month = cnNumber(m.groupValues[1])
                 val day = cnNumber(m.groupValues[2])
                 if (month != null && day != null && month in 1..12 && day in 1..31) {
-                    date = runCatching { LocalDate.of(today(now, zone).year, month, day) }
+                    val baseYear = currentYear(now, zone) + yearDelta
+                    date = runCatching { LocalDate.of(baseYear, month, day) }
                         .getOrNull()
                     matched += "${month}月${day}日"
                     rest = rest.removeRange(m.range)
@@ -221,13 +271,47 @@ object NaturalLanguage {
         // 4) 时间
         var time: LocalTime? = null
         var period: String? = null
+        // 单字时段：「晚九点」「早七点」「夜十一点」。只在后面紧跟「数字+点」时才认，
+        // 免得把「晚会」「早餐」这类名字里的字当成时段（用户报过「明天晚九点吃药」被吃成「晚吃药」）。
+        SHORT_PERIOD.find(rest)?.let { m ->
+            period = when (m.groupValues[1]) {
+                "早" -> "早上"
+                "晚" -> "晚上"
+                else -> "夜里"
+            }
+            matched += m.value
+            rest = rest.removeRange(m.range)
+        }
         PERIOD.find(rest)?.let { m ->
             period = m.value
             matched += m.value
             rest = rest.removeRange(m.range)
         }
 
-        CLOCK_COLON.find(rest)?.let { m ->
+        // 3.5) 时间区间「3 点到 5 点」「下午三点到五点」「15:00-17:00」
+        var rangeEnd: LocalTime? = null
+        RANGE.find(rest)?.let { m ->
+            val h1 = cnNumber(m.groupValues[1])
+            val m1 = cnNumber(m.groupValues[2]) ?: 0
+            val h2 = cnNumber(m.groupValues[3])
+            val m2 = cnNumber(m.groupValues[4]) ?: 0
+            if (h1 != null && h2 != null && h1 in 0..24 && h2 in 0..24) {
+                var s = LocalTime.of(h1.coerceAtMost(23), m1.coerceIn(0, 59))
+                var e = LocalTime.of(h2.coerceAtMost(23), m2.coerceIn(0, 59))
+                period?.let { p ->
+                    s = applyPeriod(s, p)
+                    e = applyPeriod(e, p)
+                }
+                // 「下午 11 点到 1 点」这种跨午夜的写法：结束时间早于开始就往前推 12 小时
+                if (!e.isAfter(s) && e.hour < 12) e = e.plusHours(12)
+                time = s
+                rangeEnd = e
+                matched += "%d:%02d–%d:%02d".format(s.hour, s.minute, e.hour, e.minute)
+                rest = rest.removeRange(m.range)
+            }
+        }
+
+        if (rangeEnd == null) CLOCK_COLON.find(rest)?.let { m ->
             val h = cnNumber(m.groupValues[1]) ?: -1
             val min = cnNumber(m.groupValues[2]) ?: 0
             if (h in 0..24 && min in 0..59) {
@@ -237,7 +321,7 @@ object NaturalLanguage {
             }
         }
 
-        if (time == null) {
+        if (time == null && rangeEnd == null) {
             CLOCK_POINT.find(rest)?.let { m ->
                 val h = cnNumber(m.groupValues[1])
                 val tail = m.groupValues[2]
@@ -301,9 +385,15 @@ object NaturalLanguage {
             }
         }
 
-        val baseDate = date
+        val shifted = today(now, zone).plusYears(yearDelta.toLong()).plusMonths(monthDelta.toLong())
+        val withDay = bareDay?.let { d ->
+            runCatching { shifted.withDayOfMonth(d.coerceAtMost(shifted.lengthOfMonth())) }.getOrNull()
+        }
+        val baseDate = date ?: withDay
             ?: dayOffset?.let { today(now, zone).plusDays(it) }
-            ?: today(now, zone)
+            // 「明年 3 月 1 号」里的 3 月 1 号已被 ABSOLUTE_DATE 解析成今年，
+            // 这里再按年/月偏移整体挪一次，两者就能组合
+            ?: today(now, zone).plusYears(yearDelta.toLong()).plusMonths(monthDelta.toLong())
 
         var clock = time ?: period?.let { PERIOD_DEFAULTS[it] } ?: LocalTime.of(9, 0)
         if (time != null && period != null) clock = applyPeriod(clock, period!!)
@@ -335,6 +425,13 @@ object NaturalLanguage {
             }
         }
 
+        if (rangeEnd != null) {
+            val s = LocalDateTime.of(startDate, clock)
+            val e = LocalDateTime.of(startDate, rangeEnd)
+            val eFixed = if (e.isAfter(s)) e else e.plusDays(1)
+            duration = java.time.Duration.between(s, eFixed).toMinutes().toInt().coerceIn(5, 24 * 60)
+        }
+
         return Parsed(
             name = name,
             startAt = start,
@@ -345,6 +442,11 @@ object NaturalLanguage {
             leadMinutes = leadMinutes,
             matched = matched,
             movedToTomorrow = moved,
+            hasDate = dayOffset != null || date != null || explicitToday,
+            hasTime = time != null || period != null,
+            hasDuration = rangeEnd != null || duration != DEFAULT_DURATION_MINUTES,
+            hasRecurrence = recurrence != Recurrence.NONE,
+            hasLead = leadMinutes > 0,
         )
     }
 
@@ -363,7 +465,20 @@ object NaturalLanguage {
     private val NDAYS = Regex("(\\d+|[一二三四五六七八九十]+)天(?:之?后)")
     private val WEEKDAY_DATE = Regex("(下周|下星期|下礼拜|这周|这星期|本周|本星期|周|星期|礼拜)([一二三四五六日天1-7])")
 
+    /** 年份：今年/明年/后年/去年/前年/2027年。 */
+    private val YEAR = Regex("(前年|去年|今年|明年|后年|(?:\\d{4})年)")
+
+    /** 月份偏移：下个月 / 下下个月 / 上个月 / 这个月。 */
+    private val MONTH_OFFSET = Regex("(上个月|下下个月|下个月|这个月)")
+    private val BARE_DAY = Regex("(\\d{1,2}|[一二三四五六七八九十]+)[号日]")
+
     private val PERIOD = Regex("(凌晨|早上|早晨|清晨|上午|中午|午休|下午|傍晚|晚上|夜里)")
+
+    /** 单字时段（早/晚/夜），后面必须紧跟「数字+点/时」才认。 */
+    private val SHORT_PERIOD = Regex("([早晚夜])(?=(?:\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时))")
+
+    /** 时间区间：3点到5点 / 下午三点到五点 / 15:00-17:00。 */
+    private val RANGE = Regex("(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)?(?::(\\d{1,2}))?\\s*(?:到|至|~|－|-)\\s*(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)?(?::(\\d{1,2}))?")
 
     private val CLOCK_COLON = Regex("(\\d{1,2}|[一二三四五六七八九十]+)[:：](\\d{1,2}|[一二三四五六七八九十]+)")
     private val CLOCK_POINT = Regex("(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)(半|一刻|三刻|(\\d{1,2}|[一二三四五六七八九十]+)分?)?")
@@ -456,6 +571,8 @@ object NaturalLanguage {
         Recurrence.WEEKLY -> date.dayOfWeek in weekDays
         Recurrence.MONTHLY -> date.dayOfMonth in monthDays
     }
+
+    private fun currentYear(now: Long, zone: ZoneId): Int = today(now, zone).year
 
     private fun today(now: Long, zone: ZoneId): LocalDate =
         Instant.ofEpochMilli(now).atZone(zone).toLocalDate()

@@ -11,7 +11,7 @@ python tools\gen_third_party_notices.py build\deps-runtime.log
 ## 结论先说
 
 * 打进 APK 的运行时依赖**全部是宽松许可**（Apache-2.0 及 MIT/BSD 等），
-  **没有任何 GPL / AGPL / LGPL 代码**，不影响本项目采用 Apache-2.0 发布。
+  **没有任何 GPL / AGPL / LGPL 代码**。本项目自身以 GPLv3 发布，与这些宽松许可的依赖相容。
 * 测试专用依赖里存在 **EPL-1.0**（JUnit 4）与 **CDDL + GPLv2 + Classpath Exception**
   （`javax.annotation-api`）等，但它们只在构建/测试期使用，**不会进入 APK**，
   也不构成对本项目源码的传染（详见仓库根目录的许可证扫描报告）。

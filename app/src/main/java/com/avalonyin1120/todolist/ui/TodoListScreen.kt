@@ -505,9 +505,13 @@ private fun TopHeader(
     // 周期待办已经开始过的过去场次（比如昨天没做的「每天 9:00」）不再算进顶栏，
     // 否则一条每天待办会让「有 N 项待处理」永远挂着、并且把「距离下次」挤掉。
     // 一次性待办保持原语义：过了时间没做就一直提醒，直到勾掉或删掉。
+    // 「待处理」按**开始时间**算，不按提醒时间算。
+    // 提醒时间可能早很多（提前 30 分钟/1 天），若按它算，一条 7:00 开始、6:30 提醒的待办
+    // 会在 6:39 就被算成「已逾期」，把真正更近的 6:57 那条挤掉——用户报的就是这个。
+    // 提醒已响但还没开始的，属于「即将」而不是「逾期」，由卡片上的状态芯片表达。
     val overdue = pending.filter { entry ->
-        val due = ReminderTime.remindAt(entry.startAt, entry.leadMinutes) <= now
-        due && (!entry.recurrence.isRecurring || now < entry.endAt)
+        val started = entry.startAt <= now
+        started && (!entry.recurrence.isRecurring || now < entry.endAt)
     }
 
     Column {

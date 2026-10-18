@@ -825,11 +825,11 @@ adb shell setprop debug.todo.anim_ms 0
 
 ### 10.1 授权
 
-本项目以 **Apache License 2.0** 发布，全文见 [LICENSE](LICENSE)。要点：
+本项目以 **GNU General Public License v3.0（GPLv3）** 发布，全文见 [LICENSE](LICENSE)。要点：
 
-- 可以自由使用、修改、商用、**闭源**再分发，只需保留版权声明与许可证副本；
-- 第 3 条附带了**专利授权**——这正是 Android 生态绝大多数库都用 Apache-2.0 的原因；
-- 第 6 条不授予商标使用权：请不要用本项目的名称或图标暗示「官方出品」。
+- 可以自由使用、修改、分发，**但分发衍生作品（含二进制）时必须一并提供完整源码**；
+- 附带了专利授权（第 11 条），且明确**不允许**把代码并入闭源专有软件；
+- 不授予商标使用权：请不要用本项目的名称或图标暗示「官方出品」。
 
 随 APK 分发的第三方组件**全部是宽松许可**（以 Apache-2.0 为主），
 **没有任何 GPL / AGPL / LGPL 代码**，完整清单见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)

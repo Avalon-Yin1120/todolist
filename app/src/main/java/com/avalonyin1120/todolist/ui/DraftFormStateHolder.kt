@@ -247,18 +247,34 @@ class DraftFormStateHolder(
      */
     fun applyParsed(parsed: NaturalLanguage.Parsed) {
         val current = _state.value
-        val start = parsed.startAt
+        val start = if (parsed.hasDate || parsed.hasTime) parsed.startAt else (current.startAt ?: parsed.startAt)
+        // 时长：只有真的认出了时长才改；否则沿用当前表单里的长度（用户手填的不能被一句话抹掉）
+        val duration = when {
+            parsed.hasDuration -> parsed.durationMinutes
+            current.startAt != null && current.endAt != null ->
+                ((current.endAt!! - current.startAt!!) / 60_000L).toInt().coerceAtLeast(1)
+            else -> parsed.durationMinutes
+        }
+        // 名称：认出来的词被摘掉，剩下的才进名称；空就保持原名（纯时间句不该把名字清空）。
+        // 「再输入一遍」时把新剩下的部分**追加**上去，于是「每周六」+「晚上九点」两步能叠加。
+        val leftover = parsed.name.trim()
+        val name = when {
+            leftover.isEmpty() || leftover == "待办" -> current.name
+            current.name.isBlank() -> leftover
+            current.name.contains(leftover) -> current.name
+            leftover.contains(current.name) -> leftover
+            else -> (current.name + " " + leftover).trim()
+        }
+        val lead = if (parsed.hasLead) parsed.leadMinutes else current.leadMinutes
         _state.value = current.copy(
-            name = parsed.name.take(80),
+            name = name.take(80),
             startAt = start,
-            endAt = start + parsed.durationMinutes * 60_000L,
-            leadMinutes = parsed.leadMinutes.coerceIn(0, ReminderTime.MAX_LEAD_MINUTES),
-            leadInput = parsed.leadMinutes
-                .coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
-                .toEditableLeadInput(),
-            recurrence = parsed.recurrence,
-            weekDays = parsed.weekDays,
-            monthDays = parsed.monthDays,
+            endAt = start + duration * 60_000L,
+            leadMinutes = lead.coerceIn(0, ReminderTime.MAX_LEAD_MINUTES),
+            leadInput = lead.coerceIn(0, ReminderTime.MAX_LEAD_MINUTES).toEditableLeadInput(),
+            recurrence = if (parsed.hasRecurrence) parsed.recurrence else current.recurrence,
+            weekDays = if (parsed.hasRecurrence) parsed.weekDays else current.weekDays,
+            monthDays = if (parsed.hasRecurrence) parsed.monthDays else current.monthDays,
         )
     }
     fun setRecurrenceEndDate(value: String?) {

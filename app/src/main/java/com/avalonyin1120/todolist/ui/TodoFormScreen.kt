@@ -891,25 +891,26 @@ internal fun deadlineIsoForCurrentRule(state: DraftFormState, zone: ZoneId): Str
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NaturalLanguageCard(form: DraftFormStateHolder, zone: ZoneId) {
-    var input by rememberSaveable { mutableStateOf("") }
+    // 融合：这一块就是「名称」输入框，不解析就是名称；解析后剩下的部分仍回到名称里。
+    val state by form.state.collectAsStateWithLifecycle()
     var matched by remember { mutableStateOf<List<String>>(emptyList()) }
     var hint by remember { mutableStateOf<String?>(null) }
 
-    FormCard(title = "一句话新建") {
+    FormCard(title = "名称（也可以直接说一句话）") {
         OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            label = { Text("说一句话") },
+            value = state.name,
+            onValueChange = form::setName,
+            label = { Text("名称") },
             placeholder = { Text("例如：明天下午三点半开周会，提前 20 分钟") },
             maxLines = 3,
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag(TAG_NL_FIELD),
+                .testTag(TAG_NAME_FIELD),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
                 onClick = {
-                    val parsed = NaturalLanguage.parse(input, System.currentTimeMillis(), zone)
+                    val parsed = NaturalLanguage.parse(state.name, System.currentTimeMillis(), zone)
                     if (parsed == null) {
                         matched = emptyList()
                         hint = "没认出时间。可以试试「明天下午 3 点」「每周一 9 点」「每月 1 号」"
@@ -921,10 +922,10 @@ private fun NaturalLanguageCard(form: DraftFormStateHolder, zone: ZoneId) {
                         } else {
                             "已填进下面的表单，可直接改。"
                         }
-                        input = ""
+                        // 名称由 applyParsed 回写（去掉已识别的词）
                     }
                 },
-                enabled = input.isNotBlank(),
+                enabled = state.name.isNotBlank(),
                 modifier = Modifier.testTag(TAG_NL_PARSE),
             ) { Text("解析并填表") }
         }

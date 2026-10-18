@@ -193,4 +193,43 @@ class NaturalLanguageTest {
         assertThat(Personalization().isDefault).isTrue()
         assertThat(Personalization(leadPresets = listOf(0, 15)).isDefault).isFalse()
     }
+
+    // ------------------------------------------------------------ 口语/年份/区间（用户反馈）
+
+    @Test
+    fun `晚九点与早七点这类单字时段`() {
+        val p = parse("明天晚九点吃药")
+        assertThat(startOf(p)).isEqualTo("2026-10-19 21:00")
+        assertThat(p!!.name).isEqualTo("吃药")
+        assertThat(startOf(parse("明天早七点跑步"))).isEqualTo("2026-10-19 07:00")
+    }
+
+    @Test
+    fun `明年与下个月`() {
+        assertThat(startOf(parse("明年3月1号上午9点开会"))).isEqualTo("2027-03-01 09:00")
+        assertThat(startOf(parse("下个月10号下午2点交表"))).isEqualTo("2026-11-10 14:00")
+        assertThat(startOf(parse("2027年5月20号上午10点体检"))).isEqualTo("2027-05-20 10:00")
+    }
+
+    @Test
+    fun `时间区间直接给出起止`() {
+        val p = parse("明天下午3点到5点开会")
+        assertThat(startOf(p)).isEqualTo("2026-10-19 15:00")
+        assertThat(p!!.durationMinutes).isEqualTo(120)
+        // 15:00-17:00 这种写法也认
+        assertThat(parse("明天15:00-17:00开会")!!.durationMinutes).isEqualTo(120)
+    }
+
+    @Test
+    fun `只认出部分时不影响已填内容`() {
+        // 模拟「两次输入叠加」：先只说重复，再只说时间
+        val step1 = parse("每周六")
+        assertThat(step1!!.hasRecurrence).isTrue()
+        assertThat(step1.hasTime).isFalse()
+        val step2 = parse("晚上九点")
+        assertThat(step2!!.hasTime).isTrue()
+        assertThat(step2.hasRecurrence).isFalse()
+        // 时间句子不该把名称变成「待办」
+        assertThat(step2.name).isEqualTo("待办")
+    }
 }
