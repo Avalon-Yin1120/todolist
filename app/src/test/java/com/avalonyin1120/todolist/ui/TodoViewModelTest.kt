@@ -294,6 +294,42 @@ class TodoViewModelTest {
     }
 
     @Test
+    fun `从总列表编辑整个系列不会把规则起始日改成今天`() = runTest(testDispatcher) {
+        // 库里那条「每天」规则起始于 3 天前；界面上它显示的是**今天这一场**
+        //（RecurrenceExpander.listEntry）。如果表单直接回填「今天这一场」再保存，
+        // 整条规则的起始日就被悄悄挪到今天了。
+        val anchor = now - 3 * 24 * 60 * TestData.MINUTE
+        repository.insert(
+            TestData.todo(
+                name = "晨会",
+                startAt = anchor,
+                endAt = anchor + 60 * TestData.MINUTE,
+                recurrence = Recurrence.DAILY,
+            )
+        )
+        settle()
+        val stored = viewModel.uiState.value.todos.single()
+        assertThat(stored.startAt).isEqualTo(anchor)
+
+        val entry = com.avalonyin1120.todolist.domain.RecurrenceExpander
+            .listEntry(stored, now, TestData.ZONE)
+        assertThat(entry.startAt).isNotEqualTo(stored.startAt) // 确认拿到的是「今天这一场」
+
+        viewModel.openEditForm(entry)
+        settle()
+        viewModel.resolveRecurrenceScope(entireSeries = true)
+        settle()
+        viewModel.form.setName("晨会（改名）")
+        viewModel.submitForm()
+        settle()
+
+        val updated = viewModel.uiState.value.todos.single()
+        assertThat(updated.name).isEqualTo("晨会（改名）")
+        assertThat(updated.startAt).isEqualTo(anchor)
+        assertThat(updated.recurrence).isEqualTo(Recurrence.DAILY)
+    }
+
+    @Test
     fun `切换完成状态会落库并撤销提醒`() = runTest(testDispatcher) {
         fillValidForm()
         viewModel.submitForm()

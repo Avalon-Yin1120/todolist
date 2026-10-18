@@ -33,11 +33,11 @@ android {
         // 版本号带 preview → 「设置 → 版本号」显示「预览构建」（见 VersionInfo.buildTypeLabel），
         // 用来提醒下载的人这是开发中的包。
         //
-        // versionCode 升到 2：1.0.0 的正式包已经装到过用户机上，保持 1 的话
-        // 「覆盖安装」这条路径会走得分外别扭（部分工具会误判成降级）。
+        // versionCode 升到 3：1.0.1-preview1 的包已经交给用户试装过，
+        // 之后又修了「编辑整个系列会把规则起始日改成今天」这一条，必须换个号。
         // 纪律：每次发版 versionCode 必须 +1；versionName 只给人看。
-        versionCode = 2
-        versionName = "1.0.1-preview1"
+        versionCode = 3
+        versionName = "1.0.1-preview2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

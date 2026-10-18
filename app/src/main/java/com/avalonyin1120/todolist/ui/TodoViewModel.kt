@@ -522,7 +522,20 @@ class TodoViewModel(
 
             RecurrenceAction.EDIT -> {
                 if (entireSeries) {
-                    openEditFormDirect(todo)
+                    // 打开表单前必须回库取**原始记录**。
+                    //
+                    // 界面传上来的 `todo` 可能是「某一场的展开副本」：
+                    // 日/周/月视图里是**那一天**的场次，总列表里是**今天（或下一场）**
+                    // （见 RecurrenceExpander.listEntry）。它的 startAt 是那一场的日期。
+                    // 直接回填再保存，会把整条规则的起始日悄悄挪到那一天——时间部分不变，
+                    // 但「生效起始日期」、次数计数、「已提醒」标记全会跟着漂移。
+                    // （T19-01「编辑一次周期待办就把生效起始日清空」是同一类问题的另一面。）
+                    viewModelScope.launch {
+                        openEditFormDirect(coordinator.findById(todo.id) ?: todo)
+                        updateLocal {
+                            it.copy(pendingRecurringTodo = null, pendingOccurrenceStart = 0L)
+                        }
+                    }
                 } else {
                     // 只预填表单，不落库：用户若点「返回」就什么都不该留下
                     openOneOffEditForm(todo, local.pendingOccurrenceStart)
