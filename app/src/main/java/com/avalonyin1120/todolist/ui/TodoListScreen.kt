@@ -205,6 +205,7 @@ fun TodoRoute(
                 Screen.FORM -> TodoFormScreen(
                     form = viewModel.form,
                     naturalLanguageEnabled = settings.naturalLanguageEnabled,
+                    leadPresets = settings.personalization.leadPresets,
                     isEditing = uiState.editState.editingId != 0L,
                     onBack = viewModel::dismissForm,
                     onSubmit = viewModel::submitForm,

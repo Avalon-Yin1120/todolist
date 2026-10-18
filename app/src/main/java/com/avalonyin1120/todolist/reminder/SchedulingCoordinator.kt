@@ -112,6 +112,34 @@ class SchedulingCoordinator(
      *
      * 这样「删除本次」不影响其它场次，也不必为每个场次建数据库行。
      */
+    /**
+     * 「仅改本次」：把生成的独立待办挂到原规则下，并把这一天记成 OVERRIDDEN。
+     *
+     * 两个坑都在这儿修：
+     * * 原来复制件的 `parentId` 是 null —— [delete] 靠 `findChildren(parentId)` 清理复制件，
+     *   于是「删掉整个系列」之后复制件还在，用户过一会儿会收到一条"幽灵提醒"；
+     * * 原来记的是 SKIPPED（「跳过」），语义不对：这一天并没有被跳过，而是被单独改过。
+     *   两者都会让原场次隐藏，所以行为不变，但日志/排查看得懂哪个是哪个。
+     */
+    suspend fun attachOneOff(childId: Long, sourceId: Long, occurrenceStart: Long) {
+        repository.findById(childId)?.let { child ->
+            if (child.parentId != sourceId) {
+                repository.update(child.copy(parentId = sourceId, updatedAt = clock.now()))
+            }
+        }
+        val source = repository.findById(sourceId) ?: return
+        val dateKey = RecurrenceExpander.dateKeyOf(occurrenceStart, zone)
+        if (source.recurrenceExceptions.any { it.date == dateKey }) return
+        cancelSchedules(sourceId)
+        repository.update(
+            source.copy(
+                recurrenceExceptions = source.recurrenceExceptions +
+                    RecurrenceException(dateKey, RecurrenceExceptionKind.OVERRIDDEN),
+                updatedAt = clock.now(),
+            )
+        )
+        repository.findById(sourceId)?.let { scheduleFor(it) }
+    }
     suspend fun skipOccurrence(todoId: Long, occurrenceStart: Long) {
         val todo = repository.findById(todoId) ?: return
         val dateKey = RecurrenceExpander.dateKeyOf(occurrenceStart, zone)

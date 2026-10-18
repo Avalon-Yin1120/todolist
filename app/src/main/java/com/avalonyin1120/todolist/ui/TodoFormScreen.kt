@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
 import com.avalonyin1120.todolist.domain.NaturalLanguage
+import com.avalonyin1120.todolist.domain.Personalization
 import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.RecurrenceOptions
@@ -85,6 +86,8 @@ fun TodoFormScreen(
     oneOffEdit: Boolean = false,
     /** 是否显示「一句话新建」（设置里可关）。 */
     naturalLanguageEnabled: Boolean = false,
+    /** 表单里「提前提醒」快捷按钮（来自设置 → 个性化）。 */
+    leadPresets: List<Int> = Personalization.DEFAULT_LEAD_PRESETS,
     onBack: () -> Unit,
     onSubmit: () -> Unit,
 ) {
@@ -123,6 +126,7 @@ fun TodoFormScreen(
             form = form,
             oneOffEdit = oneOffEdit,
             naturalLanguageEnabled = naturalLanguageEnabled,
+            leadPresets = leadPresets,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(padding),
@@ -146,6 +150,8 @@ fun TodoFormContent(
     oneOffEdit: Boolean = false,
     /** 是否显示「一句话新建」（设置里可关，关掉后解析器完全不会被调用）。 */
     naturalLanguageEnabled: Boolean = false,
+    /** 表单里「提前提醒」快捷按钮（来自设置 → 个性化）。 */
+    leadPresets: List<Int> = Personalization.DEFAULT_LEAD_PRESETS,
 ) {
     val state by form.state.collectAsStateWithLifecycle()
     val errors by form.errors.collectAsStateWithLifecycle()
@@ -382,7 +388,7 @@ fun TodoFormContent(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    QUICK_LEADS.forEach { minutes ->
+                    leadPresets.forEach { minutes ->
                         FilterChip(
                             selected = state.leadMinutes == minutes,
                             onClick = { form.setLeadMinutes(minutes) },
@@ -663,7 +669,6 @@ private fun recurrenceChipLabel(option: Recurrence): String = when (option) {
     Recurrence.MONTHLY -> "每月"
 }
 
-private val QUICK_LEADS = listOf(0, 5, 30, 60, 1440)
 
 /**
  * 提醒方式的说明文案。

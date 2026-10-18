@@ -452,10 +452,10 @@ class TodoViewModel(
             if (result != null) {
                 logTodoWrite(isNew, draft)
             }
-            // 「仅修改这一次」：独立待办保存成功后，才在来源规则上把这一天标记为例外，
+            // 「仅修改这一次」：独立待办保存成功后，才把它挂到原规则下、并把这一天标记为例外，
             // 避免同一天既出现原规则的场次、又出现这条独立待办
             if (oneOffSourceId != 0L) {
-                coordinator.skipOccurrence(oneOffSourceId, draft.startAt)
+                result?.let { coordinator.attachOneOff(it.todoId, oneOffSourceId, draft.startAt) }
             }
             if (result != null) {
                 // 提示优先级：降级（闹钟式退化为通知）> 时间段冲突 > 保存成功。
