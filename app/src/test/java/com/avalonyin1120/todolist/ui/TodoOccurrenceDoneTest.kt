@@ -34,7 +34,7 @@ import org.robolectric.RobolectricTestRunner
  *
  * 用户报的 bug：勾掉周期待办的某一场，其它还没到的场次也一起显示已完成。
  * 界面上的「打勾」入口拿到的对象分两种——日/周/月视图里是**展开出来的当次场次**，
- * 总列表里是 [RecurrenceExpander.asListEntry] 给的「起始日那一场」——因此这里
+ * 总列表里是 [RecurrenceExpander.listEntry] 给的「今天这一场」——因此这里
  * 就按这两种入参分别验证：完成的只是这一场，整条记录的 `isDone` 不被改写。
  *
  * 放在独立的测试类里，是为了不和在改 `TodoViewModelTest` 的其它改动抢同一个文件。
@@ -128,9 +128,15 @@ class TodoOccurrenceDoneTest {
             )
         )
 
-        // 今天这一场显示已完成；列表（取起始日那一场）也跟着显示已完成
+        // 今天这一场显示已完成；列表里「今天这一场」也跟着显示已完成
         assertThat(RecurrenceExpander.occurrenceOn(stored, today, TestData.ZONE).isDone).isTrue()
-        assertThat(RecurrenceExpander.asListEntry(stored, TestData.ZONE).isDone).isTrue()
+        assertThat(
+            RecurrenceExpander.listEntry(
+                stored,
+                RecurrenceExpander.occurrenceOn(stored, today, TestData.ZONE).startAt,
+                TestData.ZONE,
+            ).isDone
+        ).isTrue()
 
         // 明天、后天照常出现，且仍是未完成
         assertThat(RecurrenceExpander.occursOn(stored, tomorrow, TestData.ZONE)).isTrue()

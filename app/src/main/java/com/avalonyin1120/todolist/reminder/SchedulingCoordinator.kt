@@ -4,6 +4,7 @@ import com.avalonyin1120.todolist.data.TodoRepository
 import com.avalonyin1120.todolist.data.TodoDraft
 import com.avalonyin1120.todolist.data.toTodo
 import com.avalonyin1120.todolist.domain.Clock
+import com.avalonyin1120.todolist.domain.Overlap
 import com.avalonyin1120.todolist.domain.RecurrenceException
 import com.avalonyin1120.todolist.domain.RecurrenceExceptionKind
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
@@ -211,12 +212,21 @@ class SchedulingCoordinator(
 
     // ------------------------------------------------------------------ 查询
 
-    /** 与给定时间段重叠的未完成待办（用于创建前的提示）。 */
-    suspend fun findOverlapping(startAt: Long, endAt: Long, excludeId: Long = 0L): List<Todo> =
-        repository.findOverlapping(startAt, endAt, excludeId)
+    /**
+     * 与 [todo] 真正会撞在同一段时间上的未完成待办（用于创建前的提示）。
+     *
+     * 不能只比 `startAt/endAt`：周期待办在库里只存规则自身的第一次时间，
+     * 之后每一场的时间戳根本没落库。判定细节见 [Overlap]——
+     * 它按「场次」比较，因此「每周一 9:00」与「每周三 9:00」不再互相误报。
+     */
+    suspend fun findOverlapping(todo: Todo, excludeId: Long = 0L): List<Todo> =
+        repository.findAll()
+            .filter { it.id != excludeId && !it.isDone }
+            .filter { Overlap.intersects(todo, it, zone) }
+            .sortedBy { it.startAt }
 
     private suspend fun detectOverlap(todo: Todo, excludeId: Long): List<Todo> =
-        repository.findOverlapping(todo.startAt, todo.endAt, excludeId)
+        findOverlapping(todo, excludeId = excludeId)
 
     // ------------------------------------------------------------------ 调度
 

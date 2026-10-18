@@ -50,6 +50,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -237,7 +238,7 @@ fun TodoRoute(
                     alarmModeInUse = settings.defaultReminderMode == ReminderMode.ALARM ||
                         uiState.todos.any {
                             it.mode == ReminderMode.ALARM &&
-                                !RecurrenceExpander.asListEntry(it, zone).isDone
+                                !RecurrenceExpander.listEntry(it, now, zone).isDone
                         },
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRequestExactAlarm = onRequestExactAlarmPermission,
@@ -392,46 +393,53 @@ fun TodoListScreen(
                     onSetGrouping = onSetGrouping,
                 )
             } else {
-                CalendarPager(
-                    tab = uiState.tab,
-                    // selectedDate 只作为跳转目标（进入视图那一刻的日期）
-                    selectedDate = uiState.selectedDate,
-                    // 只有用户主动跳转才驱动 pager，见 CalendarPager 的说明
-                    jumpRequest = uiState.jumpRequest,
-                    today = CalendarLayout.toLocalDate(now, zone),
-                    // 显示的那一期变了：只更新上层日期用于倒计时与切回视图，不反向驱动 pager
-                    onDisplay = { date ->
-                        if (date != uiState.selectedDate) onSelectDateSoft(date)
-                    },
-                    onPickDate = onSelectDate,
-                ) { periodDate ->
-                    when (uiState.tab) {
-                        NavTab.DAY -> DailyView(
-                            todos = uiState.todos,
-                            date = periodDate,
-                            now = now,
-                            zone = zone,
-                            onToggleDone = onToggleDone,
-                            onEdit = onEdit,
-                            onDelete = onDelete,
-                        )
-                        NavTab.WEEK -> WeeklyView(
-                            todos = uiState.todos,
-                            anchor = periodDate,
-                            now = now,
-                            zone = zone,
-                            onPickDate = onSelectDate,
-                            // 纵向只画设置里选定的那一段（默认 06:00~22:00）
-                            windowStartHour = uiState.settings.weekViewStartHour,
-                            windowEndHour = uiState.settings.weekViewEndHour,
-                        )
-                        else -> MonthlyView(
-                            todos = uiState.todos,
-                            anchor = periodDate,
-                            zone = zone,
-                            today = CalendarLayout.toLocalDate(now, zone),
-                            onPickDate = onSelectDate,
-                        )
+                // 按 tab 重建 pager：页码的「一期」含义随粒度变化（第 41396 页在日视图是
+                // 某一天、在周视图是公元 2400 年的某一周）。不重建的话，切换视图后的
+                // **第一帧**仍按旧页码换算新粒度，标题与内容先显示一个荒唐的日期，
+                // 等 LaunchedEffect 把页码对齐过来才变成正确的——用户看到的就是「闪一下」。
+                // 重建之后首帧即正确（initialPage 直接按新粒度算）。
+                key(uiState.tab) {
+                    CalendarPager(
+                        tab = uiState.tab,
+                        // selectedDate 只作为跳转目标（进入视图那一刻的日期）
+                        selectedDate = uiState.selectedDate,
+                        // 只有用户主动跳转才驱动 pager，见 CalendarPager 的说明
+                        jumpRequest = uiState.jumpRequest,
+                        today = CalendarLayout.toLocalDate(now, zone),
+                        // 显示的那一期变了：只更新上层日期用于倒计时与切回视图，不反向驱动 pager
+                        onDisplay = { date ->
+                            if (date != uiState.selectedDate) onSelectDateSoft(date)
+                        },
+                        onPickDate = onSelectDate,
+                    ) { periodDate ->
+                        when (uiState.tab) {
+                            NavTab.DAY -> DailyView(
+                                todos = uiState.todos,
+                                date = periodDate,
+                                now = now,
+                                zone = zone,
+                                onToggleDone = onToggleDone,
+                                onEdit = onEdit,
+                                onDelete = onDelete,
+                            )
+                            NavTab.WEEK -> WeeklyView(
+                                todos = uiState.todos,
+                                anchor = periodDate,
+                                now = now,
+                                zone = zone,
+                                onPickDate = onSelectDate,
+                                // 纵向只画设置里选定的那一段（默认 06:00~22:00）
+                                windowStartHour = uiState.settings.weekViewStartHour,
+                                windowEndHour = uiState.settings.weekViewEndHour,
+                            )
+                            else -> MonthlyView(
+                                todos = uiState.todos,
+                                anchor = periodDate,
+                                zone = zone,
+                                today = CalendarLayout.toLocalDate(now, zone),
+                                onPickDate = onSelectDate,
+                            )
+                        }
                     }
                 }
             }
@@ -473,12 +481,17 @@ private fun TopHeader(
     onOpenSettings: () -> Unit,
     onAdd: () -> Unit,
 ) {
-    // 「未完成」要按场次看：周期待办整条的 isDone 已经没有意义（见 asListEntry），
-    // 否则勾掉起始日那一场之后，这条周期待办会从倒计时里整个消失。
-    val pending = uiState.todos
-        .map { RecurrenceExpander.asListEntry(it, zone) }
-        .filterNot { it.isDone }
-    val overdue = pending.filter { ReminderTime.remindAt(it.startAt, it.leadMinutes) <= now }
+    // 「未完成」要按场次看：周期待办整条的 isDone 已经没有意义，卡片上是「今天这一场」。
+    val entries = uiState.todos.map { RecurrenceExpander.listEntry(it, now, zone) }
+    val pending = entries.filterNot { it.isDone }
+    // 「待处理」只算**还没结束**的那一场：
+    // 周期待办已经开始过的过去场次（比如昨天没做的「每天 9:00」）不再算进顶栏，
+    // 否则一条每天待办会让「有 N 项待处理」永远挂着、并且把「距离下次」挤掉。
+    // 一次性待办保持原语义：过了时间没做就一直提醒，直到勾掉或删掉。
+    val overdue = pending.filter { entry ->
+        val due = ReminderTime.remindAt(entry.startAt, entry.leadMinutes) <= now
+        due && (!entry.recurrence.isRecurring || now < entry.endAt)
+    }
 
     Column {
         CenterAlignedTopAppBar(
@@ -531,7 +544,7 @@ private fun TopHeader(
                     modifier = Modifier.testTag(TAG_PERIOD_LABEL),
                 )
                 Text(
-                    text = countdownText(pending, overdue, now, zone),
+                    text = countdownText(uiState.todos, overdue, now, zone),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -560,29 +573,35 @@ private fun periodLabel(uiState: TodoUiState, zone: ZoneId): String {
 /**
  * 倒计时文案。
  *
- * 优先显示「已到提醒时间但还没处理」的数量——那是用户最需要知道的；
- * 否则显示下一次待办还有多久。
+ * 优先显示「已经开始但还没处理」的数量——那是用户最需要知道的；
+ * 否则显示**下一次真的会到来、且还没完成**的待办还有多久。
+ *
+ * 「下一次」的算法是 [RecurrenceExpander.nextPendingOccurrence]：
+ * 只看未来的场次，并且跳过已经打过勾的。于是
+ * * 一条每天 9:00、今天已经勾掉的待办，下次指向**明天** 9:00，而不是今天这场；
+ * * 过去没做的场次不会把倒计时钉在昨天，也不再挤占「有 N 项待处理」。
  */
 private fun countdownText(
-    pending: List<Todo>,
+    todos: List<Todo>,
     overdue: List<Todo>,
     now: Long,
     zone: ZoneId,
 ): String {
-    if (pending.isEmpty()) return "暂无待办"
+    if (todos.isEmpty()) return "暂无待办"
 
     if (overdue.isNotEmpty()) {
         val nearest = overdue.minByOrNull { it.startAt }!!
         return "有 ${overdue.size} 项待处理 · 最近：${nearest.name}"
     }
 
-    val next = pending
-        .map { it to RecurrenceExpander.nextOccurrenceAfter(it, now, zone) }
-        .filter { it.second != null }
-        .minByOrNull { it.second!! }
+    val next = todos
+        .mapNotNull { todo ->
+            RecurrenceExpander.nextPendingOccurrence(todo, now, zone)?.let { todo to it }
+        }
+        .minByOrNull { it.second }
 
-    if (next == null || next.second == null) return "共 ${pending.size} 项待办"
-    val target = next.second!!
+    if (next == null) return "共 ${todos.size} 项待办"
+    val target = next.second
     return "距离下次待办还有 ${formatCountdown(target - now)} · ${next.first.name}"
 }
 
@@ -610,10 +629,9 @@ private fun TodoOverview(
     onDelete: (Todo) -> Unit,
     onSetGrouping: (ListGrouping) -> Unit,
 ) {
-    // 总列表展示的是一条条「规则」，但周期待办的完成状态必须按场次看：
-    // 先映射成「起始日那一场」（见 asListEntry），再排序。否则勾完这一场卡片上
-    // 既看不出已完成、「按状态」排序也不会把它排到后面。
-    val entries = uiState.todos.map { RecurrenceExpander.asListEntry(it, zone) }
+    // 总列表展示的是一条条「规则」，但卡片必须是**今天（或下一场）**那一场：
+    // 完成状态、显示的时间、勾选动作都落在同一场上（见 RecurrenceExpander.listEntry）。
+    val entries = uiState.todos.map { RecurrenceExpander.listEntry(it, now, zone) }
     val grouped: List<Todo> = when (uiState.grouping) {
         ListGrouping.BY_TIME -> ListOrdering.byTime(entries)
         ListGrouping.BY_DONE -> ListOrdering.byDone(entries)

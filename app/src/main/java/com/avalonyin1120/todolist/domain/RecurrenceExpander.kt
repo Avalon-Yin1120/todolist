@@ -188,17 +188,59 @@ object RecurrenceExpander {
     }
 
     /**
-     * 列表页展示用的「这一条」。
+     * 列表页展示用的「这一条」：周期待办取**今天这一场**，今天没有就取**下一场**。
      *
-     * 周期待办在总列表里只出现一次（列表展示的是规则，不是某一天），卡片上的日期时间
-     * 取的是规则自身的起始时间，所以完成状态也必须取**起始日那一场**：
-     * 取整条 `isDone` 会让所有场次一起变成已完成（用户报的 bug）；
-     * 取「今天那一场」又和卡片上显示的日期对不上——勾了看不到勾。
+     * ## 为什么不再取「起始日那一场」
+     *
+     * 旧实现（`asListEntry`）把卡片固定成规则起始日那一场。于是：
+     * * 一条从三周前开始的「每天 9:00」，卡片上永远写着三周前那天，勾选框勾的是那一天；
+     * * 勾掉起始日那一场后，整条规则在卡片上显示「已完成」，而今天这一场根本没做；
+     * * 顶栏的「待处理 / 距离下次」也跟着那一天算，出现「距离下次待办还有 …」与
+     *   「有 N 项待处理」互相打架的情况（用户报的 bug）。
+     *
+     * 现在卡片就是「今天要做的那一场」：日期时间、完成状态、勾选动作三者统一。
+     * 今天不是它的日子（例如「每周一」而今天是周三）就显示下一场，此时它还没开始，
+     * 界面上不给勾选框（见 [TodoClassifier]：未来的事谈不上完成）。
+     * 规则已经没有任何场次（次数用完 / 已过截止）时退回起始日那一场，
+     * 保证卡片上总有东西可看、可改、可删。
      */
-    fun asListEntry(todo: Todo, zone: ZoneId): Todo {
+    fun listEntry(todo: Todo, now: Long, zone: ZoneId): Todo {
         if (!todo.recurrence.isRecurring) return todo
+
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        if (occursOn(todo, today, zone)) return occurrenceOn(todo, today, zone)
+
+        val next = nextOccurrenceAfter(todo, now, zone)
+        if (next != null) {
+            val nextDate = Instant.ofEpochMilli(next).atZone(zone).toLocalDate()
+            return occurrenceOn(todo, nextDate, zone)
+        }
+
         val startDate = Instant.ofEpochMilli(todo.startAt).atZone(zone).toLocalDate()
         return occurrenceOn(todo, startDate, zone)
+    }
+
+    /**
+     * 从 [now] 起、之后最近一次**还没完成**的场次开始时间；没有则返回 null。
+     *
+     * 与 [nextOccurrenceAfter] 的区别只有一个：跳过已经打过勾的场次。
+     * 顶栏的「距离下次待办还有多久」用它——今天是每天 9:00 的待办、已经勾掉了，
+     * 那「下次」就该是**明天** 9:00，而不是仍然指着今天这场已完成的时间。
+     */
+    fun nextPendingOccurrence(todo: Todo, now: Long, zone: ZoneId, searchDays: Long = 400): Long? {
+        if (!todo.recurrence.isRecurring) {
+            return todo.startAt.takeIf { it > now && !todo.isDone }
+        }
+        var date = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val endDate = date.plusDays(searchDays)
+        while (!date.isAfter(endDate)) {
+            if (occursOn(todo, date, zone) && !isCompleted(todo, date)) {
+                val candidate = occurrenceOn(todo, date, zone).startAt
+                if (candidate > now) return candidate
+            }
+            date = date.plusDays(1)
+        }
+        return null
     }
 
     /** [date] 这一场是否已被标记完成。 */

@@ -804,49 +804,81 @@ adb shell setprop debug.todo.anim_ms 0
 
 ---
 
-## 10. 发布清单（v1.0.0-preview1）
+## 10. 授权、分发与发版
 
-> **当前状态：预览版，不上架。** 用户已明确「目前不应有正式版，下个版本仍应该是预览版」，
-> 因此 `versionName` 带 `preview`、版本页显示「预览构建」，上架相关的事项一律挂起等通知。
+> **本项目不上架应用商店**：以开源方式发布，构建好的 APK 通过 **GitHub Release** 分发。
+> 版本号保持 `-previewN` 后缀，应用内版本页显示「预览构建」，提醒下载的人这是开发中的包。
 
-### 10.1 已完成
+### 10.1 授权
+
+本项目以 **Apache License 2.0** 发布，全文见 [LICENSE](LICENSE)。要点：
+
+- 可以自由使用、修改、商用、**闭源**再分发，只需保留版权声明与许可证副本；
+- 第 3 条附带了**专利授权**——这正是 Android 生态绝大多数库都用 Apache-2.0 的原因；
+- 第 6 条不授予商标使用权：请不要用本项目的名称或图标暗示「官方出品」。
+
+随 APK 分发的第三方组件**全部是宽松许可**（以 Apache-2.0 为主），
+**没有任何 GPL / AGPL / LGPL 代码**，完整清单见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+（由 `tools/gen_third_party_notices.py` 从真实解析出的依赖树生成，不是手写的）。
+测试依赖里存在 EPL-1.0（JUnit 4）、CDDL+GPLv2-with-CPE 等，但它们**只在构建/测试期使用，
+不会进入 APK**，也不构成对源码的传染。
+
+### 10.2 发布一个版本（GitHub Release）
+
+1. **改版本号**：`versionCode` **必须比上一版 +1**（系统与安装器据此判断新旧），
+   `versionName` 只给人看，预览版带 `-previewN`。
+2. **构建**：见 §3.2，产物 `app/build/outputs/apk/release/app-release.apk`。
+3. **校验**（两条都不能省）：
+   ```powershell
+   $bt = "$env:ANDROID_HOME\build-tools\35.0.0"
+   & "$bt\aapt2.exe" dump badging app\build\outputs\apk\release\app-release.apk | Select-String 'package:|sdkVersion'
+   & "$bt\apksigner.bat" verify --print-certs app\build\outputs\apk\release\app-release.apk
+   ```
+   第二条**不能**出现 `CN=Android Debug`；第一条的 `versionCode` 必须比上一版大。
+4. **上传**：GitHub Release 里附上 APK、SHA-256 校验值、更新说明，
+   并链接 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`（Apache-2.0 要求随分发提供许可证副本）。
+5. **签名永远是同一套 keystore**（`release/` 目录，已在 `.gitignore` 里排除）。
+   换签名会导致老用户装不上新版本（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+
+### 10.3 签名指纹（供下载者校验）
+
+| 项 | 值 |
+|---|---|
+| SHA-256 | `32:26:B6:1F:65:03:D5:2B:0C:5B:9E:F1:B5:0E:88:E3:95:21:90:A7:83:67:4F:61:CA:F3:02:74:65:B3:33:A6` |
+| SHA-1 | `D8:17:D5:A4:B6:35:23:3C:74:1B:93:D0:32:89:7E:8B:5C:BD:FD:75` |
+| DN | `CN=Avalon-Yin1120, OU=Mobile, O=Avalon-Yin1120, L=Shenzhen, ST=Guangdong, C=CN` |
+
+装之前可以自己核对：`apksigner verify --print-certs 待办提醒.apk`。
+
+> ⚠️ **只从本仓库的 Releases 下载 APK。** 任何第三方站点重新打包的版本都可能被植入代码，
+> 而签名指纹一比对就能看出来。
+
+### 10.4 发布前复核清单
 
 | 项 | 状态 | 说明 / 证据 |
 |---|---|---|
-| 包名 | ✅ | `com.avalonyin1120.todolist`（原 `com.example.todolist`）。对 Play 而言是**全新应用**；旧测试包留在测试机上，建议卸载 |
-| 版本号 | ✅ | `versionCode = 1`、`versionName = "1.0.0-preview1"`（**预览版**）；`aapt2 dump badging` 实测产物里就是这两个值，版本页按 preview 显示「预览构建」 |
-| release 签名 | ✅ | `release/keystore.properties` + `release/todolist-release.jks`（**均不进版本库**）；`apksigner verify` 实测 v2 + v3 已签名，DN `CN=Avalon-Yin1120`，指纹 `3226B61F…33A6`。口令与 jks 必须离线备份两处以上 |
-| R8 + 资源压缩 | ✅ | release 包 **1.4 MB** 量级（debug 16.4 MB）；`app/proguard-rules.pro` 逐条写了为什么需要那条规则 |
-| 数据库迁移策略 | ✅ | 去掉 `fallbackToDestructiveMigration`，改成显式 `MIGRATIONS` 数组（当前为空：包名变更 = 全新安装）。加迁移的步骤写在 `TodoDatabase.MIGRATIONS` 注释里。**新增「不通知」档不需要迁移**（提醒方式按枚举名存字符串） |
-| 权限最小化 | ✅ | release 清单只有 8 个自有权限 + WorkManager 自动声明的 `ACCESS_NETWORK_STATE`；**没有 `INTERNET`**、**没有 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`**（后者会被 Play 判违规，见 §7.10） |
-| `USE_EXACT_ALARM` | ✅ 已声明 | 安装即授予精确闹钟能力（用户关不掉），因此「精确闹钟」那一项在新系统上恒真、文案改成「已由系统自动授予」；`SCHEDULE_EXACT_ALARM` 同时保留给 Android 12。Play 只允许「闹钟/日历」类应用声明它，**上架时要在后台填写用途说明**（本应用属提醒类） |
-| 两种提醒都精确 | ✅ | 通知方式从「非精确闹钟」改成 `setExactAndAllowWhileIdle`，闹钟式仍是 `setAlarmClock`；两者都没有权限时自动退化为非精确（不会崩、不会静默失败） |
-| 后台运行跳转 | ✅ | 「去设置」改为候选意图链：ColorOS 的耗电管理/自启动组件（逐个 `resolveActivity`）→ **应用详情页** → 系统电池优化列表。实测在类原生上落到 `APPLICATION_DETAILS_SETTINGS`（应用详情），正是用户要求的路径 |
-| 通知样式体检 | ✅ | 检查页新增「通知样式（静默 / 锁屏 / 横幅）」：逐条渠道列出状态、各带一个直达其渠道设置页的按钮，另有「打开通知设置（全部类别）」；顶部横幅的缺项计数把它算作一项 |
-| debug 专用组件不导出 | ✅ | `DebugAlarmReceiver` / `DebugSeedReceiver` 只在 `src/debug/AndroidManifest.xml`，release 清单里根本没有；其余组件 `exported="false"`，已用 `aapt2 dump xmltree` 逐条核对 |
-| lint | ✅ **0 error / 86 warning** | 它会抓出**会导致 release 不可用**的问题：`LocalDate.ofInstant` 要 API 34（§7.9）、WorkManager 初始化器未被移除（§7.11）。余下 warning（未用字符串资源、`ObsoleteSdkInt`、`UseKtx` 等）逐类复核后接受 |
-| release 包实测 | ✅ | 装到 API 35 模拟器：正常启动、无异常日志；列表显示默认「通知」方式；`dumpsys alarm` 有 `action.FIRE_REMINDER`、`dumpsys jobscheduler` 有 WorkManager 的 job（说明按需初始化正常，§7.11） |
-| 应用图标 | ✅ | 自适应图标（品牌色 `#4F46E5` + 勾选图形）+ **Android 13 主题图标单色层**；商店用 512×512 PNG 由同一份矢量源渲染（`发布\图标\`） |
-| 隐私政策 / 商店文案 | ✅ | `发布\隐私政策.md`、`发布\应用商店文案.md`；**联网与自动更新**已决定**不做**（不申请 `INTERNET`），影响评估 `发布\联网与自动更新_影响评估.md` 仅作留档 |
-| 闹钟随时停得掉 | ✅ | 铃声单一持有者 + 单一停止出口 + 通知上的「停止/完成」+ 迟到启动抑制；v19 又补上**按音量键 / 按锁屏键即视为已收到**（并为此把服务的唤醒锁收短到只在拉起页面期间持有，否则电源键按不灭屏）。实测见 §4.6/§4.7 与 `发布\验证脚本_v19_*.ps1` |
-| 提醒方式三档 | ✅ | 新增「不通知」：不排任何调度、表单隐藏提前量、卡片标「不提醒」；设备实测表单三档可切、切换后提前量区块确实消失 |
+| 包名 | ✅ | `com.avalonyin1120.todolist`；开机后不可修改 |
+| 版本号 | ✅ | 当前 `versionCode = 2`、`versionName = "1.0.1-preview1"`；`aapt2 dump badging` 实测与产物一致 |
+| release 签名 | ✅ | `apksigner verify` 实测 v2 + v3 已签名，DN `CN=Avalon-Yin1120`；keystore 与口令**不在版本库**里，务必离线备份两处以上 |
+| R8 + 资源压缩 | ✅ | release 包 **1.4 MB** 量级（debug 约 16.5 MB）；`app/proguard-rules.pro` 逐条写了为什么需要那条规则 |
+| 单元测试 | ✅ | **351 条 / 21 个类**全绿（`:app:testDebugUnitTest`，Robolectric，无需设备） |
+| 数据库迁移策略 | ✅ | 显式 `MIGRATIONS` 数组，没有 `fallbackToDestructiveMigration`（升级即清库）。加迁移的步骤写在 `TodoDatabase.MIGRATIONS` 注释里 |
+| 权限最小化 | ✅ | release 清单实测 11 条 = 9 个自有权限 + WorkManager 自动声明的 `ACCESS_NETWORK_STATE` + AndroidX 自动生成的 `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`；**没有 `INTERNET`**、**没有 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`** |
+| 无联网 | ✅ | 没有 `INTERNET` 权限 ⇒ 系统在内核层面拒绝本进程建连。数据全部留在本机 Room 数据库里 |
+| `USE_EXACT_ALARM` | ✅ 已声明 | Android 13+ 安装即授予精确闹钟；`SCHEDULE_EXACT_ALARM` 同时保留给 Android 12。两者都没有时调度器自动退化为非精确（不会崩、不会静默失败） |
+| 两种提醒都精确 | ✅ | 通知方式用 `setExactAndAllowWhileIdle`，闹钟式用 `setAlarmClock` |
+| 后台运行跳转 | ✅ | 「去设置」为候选意图链：ColorOS 的耗电管理/自启动组件（逐个 `resolveActivity`）→ 应用详情页 → 系统电池优化列表 |
+| 检查页 | ✅ | 「照着做的清单」：人话标题 + 系统里的实际操作路径 + 「去设置」+「我已设置好」勾选；读不到状态的项交给用户确认，不谎报 |
+| debug 专用组件不导出 | ✅ | `DebugAlarmReceiver` / `DebugSeedReceiver` 只在 `src/debug/AndroidManifest.xml`；其余组件 `exported="false"`，已用 `aapt2 dump xmltree` 逐条核对 |
+| lint | ✅ | **0 error**；余下 warning（未用字符串资源、`ObsoleteSdkInt`、`UseKtx` 等）逐类复核后接受 |
+| release 包实测 | ✅ | 装到 API 35 模拟器：正常启动、无异常日志；`dumpsys alarm` 有 `action.FIRE_REMINDER`、`dumpsys jobscheduler` 有 WorkManager 的 job（按需初始化正常） |
+| 应用图标 | ✅ | 自适应图标（品牌色 `#4F46E5` + 勾选图形）+ Android 13 主题图标单色层，**矢量自绘**，无第三方素材 |
+| 提示音 | ✅ | `res/raw/alarm_beep.wav` 由 `tools/make_alarm_beep.py` **程序合成**（880/1170 Hz 纯正弦，频谱实测无谐波），非第三方音效 |
+| 闹钟随时停得掉 | ✅ | 铃声单一持有者 + 单一停止出口 + 通知上的「停止/完成」+ 迟到启动抑制；**按音量键 / 按锁屏键即视为已收到**（为此把服务的唤醒锁收短到只在拉起页面期间持有，否则电源键按不灭屏） |
+| 提醒方式三档 | ✅ | 通知 / 闹钟式 / 不通知；「不通知」只记录不排调度，表单隐藏提前量，卡片标「不提醒」 |
 
-### 10.2 发布前还要做的（等用户通知再启动）
+### 10.5 每次发版的固定流程
 
-1. ⬜ **真机回归**（唯一无法在模拟器完成的）：至少一台 ColorOS、一台类原生，验证据 §5.4 的五个开关
-   （尤其 Android 14+ 的**全屏提醒**），以及 §5.5 的「强停之后收不到提醒」这一系统限制。
-2. ⬜ **商店截图**：`发布\截图\` 里已有 5 张 1080×1920（9:16）的可用截图（日视图 / 周视图 /
-   月视图 / 新增表单 / 设置页，取自 debug 包）；正式提交前建议在真机上再拍一遍。
-3. ⬜ **隐私政策托管地址**：`发布\隐私政策.md` 里的生效日期与 URL 是占位符，
-   上传到可访问的网页（GitHub Pages / 仓库 README 均可）后回填，并同步到商店后台。
-4. ⬜ **Play 后台声明**：`FOREGROUND_SERVICE_SPECIAL_USE`（闹钟响铃期间的常驻服务）、
-   `USE_FULL_SCREEN_INTENT`（锁屏上弹出提醒页）、`USE_EXACT_ALARM`（精确到点提醒）
-   三项在 Play Console 都需要填写用途说明；国内商店要求类似。
-5. ⬜ **`release/` 目录已离线备份**（keystore + properties）。**这一步没做就不要发包**：
-   Play 不接受更换签名的更新，丢了只能换包名重新上架。
-6. ⛔ **自动更新 / 联网：已决定不做**（用户 2026-10-13 决定不申请 `INTERNET` 权限）。
-   `发布\联网与自动更新_影响评估.md` 转为**留档**：将来若改主意，那里已经列好
-   「一加权限，哪几处对外说法会立刻不成立、该改成什么措辞」，以及三步实施顺序。
-7. ⬜ 发版流程：把 `versionName` 里的 `preview` 去掉、`versionCode` +1 → 跑
-   `:app:testDebugUnitTest` + `:app:connectedDebugAndroidTest` + `:app:lint`
-   → `assembleRelease` + `bundleRelease` → 存档产物与变更说明。
+改代码 → `versionCode + 1`、必要时改 `versionName` → `:app:testDebugUnitTest` →
+`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（`v1.0.1-preview1`）→
+GitHub Release 上传 APK + SHA-256 + 说明。

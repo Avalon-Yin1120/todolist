@@ -538,9 +538,10 @@ class TodoViewModel(
      * 打勾 / 取消打勾。
      *
      * 传入的 [todo] 就是界面上的「这一条」：日/周/月视图里它是展开出来的**当次场次**，
-     * 总列表里是 [com.avalonyin1120.todolist.domain.RecurrenceExpander.asListEntry] 给的
-     * 「起始日那一场」。周期待办因此总带着一个明确的场次开始时间，完成只落在这一场上，
-     * 不会牵动其它场次（整条的 `isDone` 也不再被改写——那正是「勾一场、全变已完成」的成因）。
+     * 总列表里是 [com.avalonyin1120.todolist.domain.RecurrenceExpander.listEntry] 给的
+     * 「今天这一场（今天没有就取下一场）」。周期待办因此总带着一个明确的场次开始时间，
+     * 完成只落在这一场上，不会牵动其它场次（整条的 `isDone` 也不再被改写——
+     * 那正是「勾一场、全变已完成」的成因）。
      */
     fun toggleDone(todo: Todo) {
         viewModelScope.launch {

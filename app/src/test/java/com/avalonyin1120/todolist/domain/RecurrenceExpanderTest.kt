@@ -321,7 +321,7 @@ class RecurrenceExpanderTest {
 
         assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 10), zone).isDone).isFalse()
         assertThat(RecurrenceExpander.occurrenceOn(todo, date(2026, 5, 11), zone).isDone).isFalse()
-        assertThat(RecurrenceExpander.asListEntry(todo, zone).isDone).isFalse()
+        assertThat(RecurrenceExpander.listEntry(todo, at(2026, 5, 10, 8), zone).isDone).isFalse()
     }
 
     @Test
@@ -366,7 +366,7 @@ class RecurrenceExpanderTest {
     }
 
     @Test
-    fun `列表条目取起始日那一场的完成状态`() {
+    fun `列表条目取今天那一场的完成状态`() {
         val todo = TestData.todo(
             startAt = at(2026, 5, 10, 9),
             endAt = at(2026, 5, 10, 9, 30),
@@ -376,15 +376,53 @@ class RecurrenceExpanderTest {
             ),
         )
 
-        val entry = RecurrenceExpander.asListEntry(todo, zone)
-        assertThat(entry.isDone).isTrue()
-        // 这一步只补完成状态，卡片上显示的起止时间不能被它改掉
-        assertThat(entry.startAt).isEqualTo(todo.startAt)
-        assertThat(entry.endAt).isEqualTo(todo.endAt)
+        // 5 月 12 日打开：卡片是 12 号这一场，10 号那场完成与否与它无关。
+        // 旧实现固定取「起始日那一场」，于是勾了 10 号之后 12 号也显示已完成（用户报的 bug）。
+        val entry = RecurrenceExpander.listEntry(todo, at(2026, 5, 12, 8), zone)
+        assertThat(entry.startAt).isEqualTo(at(2026, 5, 12, 9))
+        assertThat(entry.endAt).isEqualTo(at(2026, 5, 12, 9, 30))
+        assertThat(entry.isDone).isFalse()
+
+        // 10 号打开：看到的就是 10 号那一场（已完成）
+        assertThat(RecurrenceExpander.listEntry(todo, at(2026, 5, 10, 8), zone).isDone).isTrue()
 
         // 一次性待办原样返回：它的完成状态本来就在整条记录上
         val once = TestData.todo(startAt = at(2026, 5, 10, 9), isDone = true)
-        assertThat(RecurrenceExpander.asListEntry(once, zone)).isEqualTo(once)
+        assertThat(RecurrenceExpander.listEntry(once, at(2026, 5, 12, 8), zone)).isEqualTo(once)
+    }
+
+    @Test
+    fun `列表条目在当天没有场次时显示下一场`() {
+        // 每周一 9:00；2026-05-13 是周三 → 卡片应显示下周一（5 月 18 日）
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 11, 9),
+            endAt = at(2026, 5, 11, 9, 30),
+            recurrence = Recurrence.WEEKLY,
+            weekDays = setOf(DayOfWeek.MONDAY),
+        )
+
+        val entry = RecurrenceExpander.listEntry(todo, at(2026, 5, 13, 8), zone)
+        assertThat(entry.startAt).isEqualTo(at(2026, 5, 18, 9))
+        assertThat(entry.isDone).isFalse()
+    }
+
+    @Test
+    fun `下一次待办跳过已经完成的场次`() {
+        val todo = TestData.todo(
+            startAt = at(2026, 5, 10, 9),
+            endAt = at(2026, 5, 10, 9, 30),
+            recurrence = Recurrence.DAILY,
+            recurrenceExceptions = listOf(
+                RecurrenceException("2026-05-12", RecurrenceExceptionKind.COMPLETED)
+            ),
+        )
+
+        // 5/12 09:30 打开：今天这场已经勾掉 → 「下次」必须是 5/13，而不是仍然指着今天
+        assertThat(RecurrenceExpander.nextPendingOccurrence(todo, at(2026, 5, 12, 9, 30), zone))
+            .isEqualTo(at(2026, 5, 13, 9))
+        // 没有勾掉的那天照旧指向当天
+        assertThat(RecurrenceExpander.nextPendingOccurrence(todo, at(2026, 5, 11, 8), zone))
+            .isEqualTo(at(2026, 5, 11, 9))
     }
 
     // ------------------------------------------------------------ 范围展开
