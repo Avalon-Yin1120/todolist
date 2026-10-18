@@ -583,6 +583,9 @@ sealed interface SettingsChange {
     /** 某种提醒方式的强调色（ARGB）。 */
     data class ReminderColor(val mode: ReminderMode, val argb: Long) : SettingsChange
 
+    /** 「已完成」的强调色（ARGB）。 */
+    data class DoneColor(val argb: Long) : SettingsChange
+
     /** 勾选 / 取消表单里某个「提前提醒」快捷按钮。 */
     data class ToggleLeadPreset(val minutes: Int) : SettingsChange
 

@@ -632,6 +632,10 @@ class TodoViewModel(
                 it.copy(statusColors = it.statusColors + (change.bucket to change.argb))
             }
 
+            is SettingsChange.DoneColor -> updatePersonalization {
+                it.copy(doneColor = change.argb)
+            }
+
             is SettingsChange.ReminderColor -> updatePersonalization {
                 it.copy(reminderColors = it.reminderColors + (change.mode to change.argb))
             }

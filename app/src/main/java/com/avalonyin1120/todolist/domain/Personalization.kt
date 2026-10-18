@@ -19,6 +19,8 @@ data class Personalization(
     val reminderColors: Map<ReminderMode, Long> = DEFAULT_REMINDER_COLORS,
     /** 表单里「提前提醒」那排快捷按钮的分钟数（去重、升序、最多 [MAX_PRESETS] 个）。 */
     val leadPresets: List<Int> = DEFAULT_LEAD_PRESETS,
+    /** 「已完成」的强调色：完成态是与状态并列的另一个维度，同样可自定义。 */
+    val doneColor: Long = DEFAULT_DONE_COLOR,
 ) {
 
     fun statusColor(bucket: TimeBucket): Long =
@@ -58,6 +60,7 @@ data class Personalization(
             append(";m.").append(it.key.name).append('=').append(hex(it.value))
         }
         append(";leads=").append(leadPresets.joinToString(","))
+        append(";done=").append(hex(doneColor))
     }
 
     companion object {
@@ -94,6 +97,9 @@ data class Personalization(
 
         /** 统一单色模式用的强调色。 */
         const val MONO_ACCENT = 0xFF6366F1L
+
+        /** 「已完成」的出厂色（与 v1 以来的灰色一致）。 */
+        const val DEFAULT_DONE_COLOR = 0xFF9AA0A6L
 
         /** 用户可选的色板（避免自定义颜色挑出看不清的组合）。 */
         val PALETTE_CHOICES: List<Long> = listOf(
@@ -147,6 +153,7 @@ data class Personalization(
                 ?: DEFAULT_LEAD_PRESETS
 
             return Personalization(
+                doneColor = map["done"]?.let(::parseHex) ?: DEFAULT_DONE_COLOR,
                 colorMode = mode,
                 statusColors = statusColors,
                 reminderColors = reminderColors,

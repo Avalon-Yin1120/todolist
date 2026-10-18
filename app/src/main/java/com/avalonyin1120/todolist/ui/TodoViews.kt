@@ -111,7 +111,8 @@ object TodoColors {
         personalization: Personalization = Personalization(),
     ): Palette {
         if (todo.isDone) {
-            return Palette(Color(0xFFE8E8EC), Color(0xFF9AA0A6))
+            // 已完成是一个**独立维度**，颜色也可以个性化（默认灰）
+            return fromAccent(Color(personalization.doneColor))
         }
         val accent = when (personalization.colorMode) {
             CardColorMode.STATUS -> personalization.statusColor(TodoClassifier.bucketOf(todo, now))
@@ -528,38 +529,82 @@ fun MonthlyView(
                 week.forEach { date ->
                     val inMonth = YearMonth.from(date) == month
                     val busyHours = CalendarLayout.busyHours(todos, date, zone)
-                    val level = CalendarLayout.busyLevel(busyHours)
-                    val hasAny = busyHours > 0
+                    val count = RecurrenceExpander
+                        .expandBetween(todos, date, date.plusDays(1), zone)
+                        .size
+                    val intensity = CalendarLayout.busyIntensity(busyHours)
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxSize()
                             .padding(2.dp)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(TodoColors.monthSmoothColor(busyHours))
-                            .border(
-                                width = if (date == today) 2.dp else 0.dp,
-                                color = if (date == today) {
-                                    MaterialTheme.colorScheme.primary
+                            // 白底而不是整格染色：底色一深，日期数字就看不清了。
+                            // 忙碌程度改用底部那条进度条表达，颜色用品牌色而不是红色——
+                            // 红色在中文语境里是「超时/告警」，拿来表示「这天比较忙」太吓人。
+                            .background(
+                                if (date == today) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
                                 } else {
                                     Color.Transparent
-                                },
+                                }
+                            )
+                            .border(
+                                width = if (date == today) 1.5.dp else 0.dp,
+                                color = if (date == today) MaterialTheme.colorScheme.primary else Color.Transparent,
                                 shape = RoundedCornerShape(6.dp),
                             )
                             .clickable { onPickDate(date) }
                             .testTag(TAG_MONTH_CELL_PREFIX + date.toString()),
-                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = date.dayOfMonth.toString(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (inMonth) {
-                                if (level >= 3) Color.White else MaterialTheme.colorScheme.onSurface
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            },
-                            fontWeight = if (hasAny) FontWeight.Bold else FontWeight.Normal,
-                        )
+                        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = date.dayOfMonth.toString(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (inMonth) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                    },
+                                    fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                // 数字角标：一眼看出「这天有几件事」，比「多忙」更有用
+                                if (count > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                            .padding(horizontal = 4.dp, vertical = 1.dp),
+                                    ) {
+                                        Text(
+                                            text = count.toString(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            // 底部进度条：长度/深浅 = 当天忙碌程度（按总时长），最多铺满整格
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(intensity.coerceIn(0f, 1f))
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(
+                                        if (count > 0) {
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f + 0.65f * intensity)
+                                        } else {
+                                            Color.Transparent
+                                        }
+                                    ),
+                            )
+                        }
                     }
                 }
             }
@@ -572,19 +617,13 @@ fun MonthlyView(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("空闲", style = MaterialTheme.typography.labelSmall)
-            // 图例按色带取样，与单元格的连续深浅保持一致
-            (0..4).forEach { step ->
-                val hours = CalendarLayout.SATURATION_HOURS * (step / 4.0).let { it * it }
-                Box(
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(TodoColors.monthSmoothColor(hours))
-                        .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-                )
-            }
-            Text("越忙越深（按当天待办总时长）", style = MaterialTheme.typography.labelSmall)
+            // 新语义只需一句话：角标=件数、底条=忙碌程度。不再用「越忙越深」的色带，
+            // 因为整格染色已经被去掉了。
+            Text(
+                text = "右上角数字 = 当天待办件数，底部横条 = 忙碌程度（按总时长）",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

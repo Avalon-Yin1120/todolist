@@ -105,6 +105,20 @@ fun PersonalizationScreen(
                 }
             }
 
+            // 完成态是独立维度：不管按状态还是按方式上色，「已完成」都用这一行选的颜色
+            SettingsCard(title = "已完成") {
+                Text(
+                    text = "无论上面选哪种依据，「已完成」的待办都用这个颜色。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ColorRow(
+                    label = "已完成",
+                    selected = personalization.doneColor,
+                    onPick = { argb -> onChange(SettingsChange.DoneColor(argb)) },
+                    tagPrefix = TAG_DONE_COLOR_PREFIX,
+                )
+            }
             when (personalization.colorMode) {
                 CardColorMode.STATUS -> SettingsCard(title = "按状态配色") {
                     TimeBucket.entries.forEach { bucket ->
@@ -150,7 +164,7 @@ fun PersonalizationScreen(
                         FilterChip(
                             selected = minutes in personalization.leadPresets,
                             onClick = { onChange(SettingsChange.ToggleLeadPreset(minutes)) },
-                            label = { Text(leadPresetLabel(minutes)) },
+                            label = { Text(if (minutes in personalization.leadPresets) "✓ " + leadPresetLabel(minutes) else leadPresetLabel(minutes)) },
                             modifier = Modifier.testTag("$TAG_LEAD_PRESET_PREFIX$minutes"),
                         )
                     }
@@ -304,3 +318,6 @@ const val TAG_NATURAL_LANGUAGE_SWITCH = "natural_language_switch"
 const val TAG_RESET_PERSONALIZATION = "reset_personalization"
 const val TAG_RESET_CONFIRM = "reset_personalization_confirm"
 const val TAG_RESET_CANCEL = "reset_personalization_cancel"
+const val TAG_DONE_COLOR_PREFIX = "done_color_"
+const val TAG_CUSTOM_LEAD_FIELD = "custom_lead_field"
+const val TAG_CUSTOM_LEAD_ADD = "custom_lead_add"
