@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -168,6 +169,27 @@ fun PersonalizationScreen(
                             modifier = Modifier.testTag("$TAG_LEAD_PRESET_PREFIX$minutes"),
                         )
                     }
+                }                // 自定义分钟数：候选只有 8 个，用户想要「提前 25 分钟」也得能填
+                var custom by remember { mutableStateOf("") }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = custom,
+                        onValueChange = { v -> custom = v.filter { it.isDigit() }.take(5) },
+                        label = { Text("自定义分钟（0–10080）") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag(TAG_CUSTOM_LEAD_FIELD),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            custom.toIntOrNull()?.let { onChange(SettingsChange.ToggleLeadPreset(it)) }
+                            custom = ""
+                        },
+                        enabled = custom.toIntOrNull()?.let { it in 0..10080 } == true,
+                        modifier = Modifier.testTag(TAG_CUSTOM_LEAD_ADD),
+                    ) { Text("添加") }
                 }
             }
 

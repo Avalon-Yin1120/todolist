@@ -831,6 +831,12 @@ private fun CalendarPager(
 
     Column(modifier = Modifier.fillMaxSize()) {
         PeriodNavigator(
+            selectedDate = shownDate,
+            today = today,
+            onJumpTo = { date ->
+                scope.launch { pagerState.scrollToPage(pageOfDate(tab, date)) }
+                currentOnDisplay(date)
+            },
             label = when (tab) {
                 NavTab.WEEK -> DateFormats.dateRange(
                     CalendarLayout.weekStart(shownDate),
@@ -968,7 +974,15 @@ private fun PeriodNavigator(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onBackToToday: () -> Unit,
+    /** 当前那一期的代表日（日历打开时定位）。 */
+    selectedDate: LocalDate = LocalDate.now(),
+    /** 今天。 */
+    today: LocalDate = LocalDate.now(),
+    /** 用户挑中某一天后跳过去。 */
+    onJumpTo: (LocalDate) -> Unit = {},
 ) {
+    var showJump by remember { mutableStateOf(false) }
+    var jumpMonth by remember { mutableStateOf(java.time.YearMonth.from(selectedDate)) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -992,6 +1006,35 @@ private fun PeriodNavigator(
         ) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下一个")
         }
+        TextButton(
+            onClick = { jumpMonth = java.time.YearMonth.from(selectedDate); showJump = true },
+            modifier = Modifier.testTag(TAG_JUMP_DATE),
+        ) { Text("跳转", style = MaterialTheme.typography.labelMedium) }
+    }
+
+    // 日期选择器：只在点击时才组合，平时零开销
+    if (showJump) {
+        AlertDialog(
+            onDismissRequest = { showJump = false },
+            title = { Text("跳转到哪一天") },
+            text = {
+                CompactCalendar(
+                    month = jumpMonth,
+                    selected = selectedDate,
+                    today = today,
+                    onSelect = {
+                        showJump = false
+                        onJumpTo(it)
+                    },
+                    onMonthChange = { jumpMonth = it },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showJump = false }, modifier = Modifier.testTag(TAG_JUMP_CANCEL)) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 
@@ -1152,6 +1195,8 @@ const val TAG_TAB_WEEK = "tab_week"
 const val TAG_TAB_MONTH = "tab_month"
 const val TAG_SWIPE_AREA = "swipe_area"
 const val TAG_PERIOD_PREV = "period_prev"
+const val TAG_JUMP_DATE = "jump_date"
+const val TAG_JUMP_CANCEL = "jump_date_cancel"
 const val TAG_PERIOD_NEXT = "period_next"
 const val TAG_BACK_TO_TODAY = "back_to_today"
 const val TAG_SORT_BY_TIME = "sort_by_time"
