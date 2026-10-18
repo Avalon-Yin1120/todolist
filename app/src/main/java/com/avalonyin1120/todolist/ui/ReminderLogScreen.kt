@@ -16,6 +16,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -45,20 +49,22 @@ import com.avalonyin1120.todolist.notify.ReminderLog
  *
  * 日志本身**不联网、不外传**：只写在本机文件里，只有用户主动复制才会离开应用。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ReminderLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     // 手动刷新：日志会持续追加，但没必要为了它做实时刷新——
     // 用户通常是「响过一遍之后」才进来看，进页面时读一次、必要时点刷新即可。
     var refreshTick by remember { mutableIntStateOf(0) }
-    val lines = remember(refreshTick) { ReminderLog.snapshotNewestFirst() }
+    // null = 全部；否则只看某个分类（新增 / 修改 / 删除 / 完成 / 排定 …）
+    var filter by remember { mutableStateOf<String?>(null) }
+    val lines = remember(refreshTick, filter) { ReminderLog.snapshotNewestFirst(filter) }
 
     Scaffold(
         modifier = Modifier.testTag(TAG_REMINDER_LOG_SCREEN),
         topBar = {
             TopAppBar(
-                title = { Text("提醒诊断日志") },
+                title = { Text("事件日志") },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag(TAG_REMINDER_LOG_BACK)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -74,23 +80,48 @@ fun ReminderLogScreen(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp),
         ) {
             Text(
-                text = "最近 ${lines.size} 条。到点没响时，把这里的内容复制发给开发者即可定位。",
+                text = "最近 ${lines.size} 条（只保留 ${ReminderLog.RETENTION_DAYS} 天）。" +
+                    "到点没响、或「我明明改过时间」这类问题，把内容复制发给开发者即可定位。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
+            // 分类筛选：日志同时记着「数据操作」与「提醒链路」，出问题时通常只看一类
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FilterChip(
+                    selected = filter == null,
+                    onClick = { filter = null },
+                    label = { Text("全部") },
+                    modifier = Modifier.testTag(TAG_REMINDER_LOG_FILTER_ALL),
+                )
+                ReminderLog.ALL_CATEGORIES.forEach { category ->
+                    val count = remember(refreshTick) { ReminderLog.countOf(category) }
+                    if (count > 0) {
+                        FilterChip(
+                            selected = filter == category,
+                            onClick = { filter = if (filter == category) null else category },
+                            label = { Text("$category $count") },
+                            modifier = Modifier.testTag("$TAG_REMINDER_LOG_FILTER_PREFIX$category"),
+                        )
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 TextButton(
                     onClick = {
-                        val text = lines.joinToString("\n")
+                        // 唯一对外出口：待办名称在这里被换成「〈待办#N：M 字〉」
+                        val text = ReminderLog.exportRedacted(filter)
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("提醒诊断日志", text))
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("事件日志（已脱敏）", text))
                     },
                     modifier = Modifier.testTag(TAG_REMINDER_LOG_COPY),
-                ) { Text("复制全部") }
+                ) { Text("导出（名称脱敏）") }
                 TextButton(
                     onClick = { refreshTick++ },
                     modifier = Modifier.testTag(TAG_REMINDER_LOG_REFRESH),
@@ -129,3 +160,5 @@ const val TAG_REMINDER_LOG_BACK = "reminder_log_back"
 const val TAG_REMINDER_LOG_COPY = "reminder_log_copy"
 const val TAG_REMINDER_LOG_REFRESH = "reminder_log_refresh"
 const val TAG_REMINDER_LOG_CLEAR = "reminder_log_clear"
+const val TAG_REMINDER_LOG_FILTER_ALL = "reminder_log_filter_all"
+const val TAG_REMINDER_LOG_FILTER_PREFIX = "reminder_log_filter_"

@@ -26,18 +26,24 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.avalonyin1120.todolist"
+        // **预览版与已装的正式版共存**：用户机上还装着 `1.0.0`（versionCode 1），
+        // 想同时装预览版就必须换 applicationId —— Android 用包名标识应用，
+        // 同包名的包会互相覆盖（签名相同也一样覆盖）。
+        // 注意：`namespace` 与代码里的包名**仍是** com.avalonyin1120.todolist，
+        // 只有安装标识带 `.preview`；action 字符串、R 类、数据库名都不变。
+        // ⚠️ 发布正式版时把这一行改回 `com.avalonyin1120.todolist`。
+        applicationId = "com.avalonyin1120.todolist.preview"
         minSdk = 26
         targetSdk = 35
         // **预览版**：应用改为 GitHub 开源 + GitHub Release 分发，不再走应用商店。
         // 版本号带 preview → 「设置 → 版本号」显示「预览构建」（见 VersionInfo.buildTypeLabel），
         // 用来提醒下载的人这是开发中的包。
         //
-        // versionCode 升到 3：1.0.1-preview1 的包已经交给用户试装过，
-        // 之后又修了「编辑整个系列会把规则起始日改成今天」这一条，必须换个号。
+        // versionCode 升到 4：这一版加了「个性化」「一句话新建」「事件日志」三块新功能，
+        // 且 applicationId 加了 .preview 后缀（与已装的 1.0.0 共存）。
         // 纪律：每次发版 versionCode 必须 +1；versionName 只给人看。
-        versionCode = 3
-        versionName = "1.0.1-preview2"
+        versionCode = 4
+        versionName = "1.1.0-preview1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

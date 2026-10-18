@@ -2,6 +2,7 @@ package com.avalonyin1120.todolist.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.avalonyin1120.todolist.domain.Personalization
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.WeekWindow
 
@@ -74,6 +75,22 @@ interface SettingsStore {
      * 契约：id **只增不改**（sys/ReminderHealth.kt 里的 STEP_xxx 是持久化键，改名等于丢掉勾选）。
      */
     var confirmedHealthItems: Set<String>
+
+    /**
+     * 个性化设置（卡片配色 + 「提前提醒」快捷按钮）。
+     *
+     * 整份设置存成一个字符串（见 [Personalization.encode]），好处是「恢复默认」只需
+     * 写回一份出厂值，不必逐个键清理；解析失败也只丢坏掉的那一项。
+     */
+    var personalization: Personalization
+
+    /**
+     * 是否启用「一句话新建待办」：在表单顶部输入一句中文，自动填好时间 / 重复 / 提前量。
+     *
+     * 默认**开启**（它只是多一个输入框，不挡任何原有流程）；关掉后表单完全不显示它，
+     * 解析器也不会被调用——用户明确表示过「不想让应用揣测我的输入」。
+     */
+    var naturalLanguageEnabled: Boolean
 }
 
 /** 生产实现。 */
@@ -145,6 +162,15 @@ class SharedPreferencesSettingsStore(context: Context) : SettingsStore {
         // 写入同样先落成一份快照：putStringSet 之后调用方若再改自己那个集合，落盘内容会跟着变。
         set(value) = prefs.edit().putStringSet(KEY_CONFIRMED_HEALTH_ITEMS, value.toSet()).apply()
 
+    override var personalization: Personalization
+        get() = Personalization.decode(prefs.getString(KEY_PERSONALIZATION, null))
+        // 写入前 normalize：越界的提前量、重复的按钮、坏掉的颜色都在这里被收拾干净
+        set(value) = prefs.edit().putString(KEY_PERSONALIZATION, value.normalized().encode()).apply()
+
+    override var naturalLanguageEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NATURAL_LANGUAGE, true)
+        set(value) = prefs.edit().putBoolean(KEY_NATURAL_LANGUAGE, value).apply()
+
     companion object {
         private const val PREFS_NAME = "todolist_settings"
 
@@ -174,6 +200,12 @@ class SharedPreferencesSettingsStore(context: Context) : SettingsStore {
          */
         private const val KEY_CONFIRMED_HEALTH_ITEMS = "confirmed_health_items"
 
+        /** 个性化设置（一整行编码后的字符串，见 [Personalization.encode]）。 */
+        private const val KEY_PERSONALIZATION = "personalization_v1"
+
+        /** 「一句话新建待办」开关。 */
+        private const val KEY_NATURAL_LANGUAGE = "natural_language_enabled"
+
         /** 用户从未设置过时的默认提前量。 */
         const val DEFAULT_LEAD_MINUTES = 0
 
@@ -197,4 +229,8 @@ class InMemorySettingsStore(
     override var weekViewEndHour: Int = WeekWindow.DEFAULT_END_HOUR,
     /** 见 [SettingsStore.confirmedHealthItems]；默认「什么都没确认」，与老用户升级上来的状态一致。 */
     override var confirmedHealthItems: Set<String> = emptySet(),
+    /** 见 [SettingsStore.personalization]；默认即出厂配色与五个快捷按钮。 */
+    override var personalization: Personalization = Personalization(),
+    /** 见 [SettingsStore.naturalLanguageEnabled]。 */
+    override var naturalLanguageEnabled: Boolean = true,
 ) : SettingsStore

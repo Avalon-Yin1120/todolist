@@ -41,6 +41,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.avalonyin1120.todolist.domain.CardColorMode
+import com.avalonyin1120.todolist.domain.Personalization
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.TimeBucket
@@ -50,8 +52,32 @@ import com.avalonyin1120.todolist.domain.WeekWindow
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
+
+
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+
+/**
+ * 当前生效的个性化设置。
+ *
+ * 为什么不是 CompositionLocal 也不是逐层传参：
+ * * 逐层传参要把「配色」一路塞进日/周/月三种视图与卡片，四五个 Composable 的签名全被污染；
+ * * CompositionLocal 需要在页面根部套 `CompositionLocalProvider`，而卡片位于
+ *   `AnimatedContent` 的 lambda 里，套起来要动一堆大括号。
+ *
+ * 所以用一份**可观察的全局状态**：它只在 [com.avalonyin1120.todolist.ui.TodoRoute]
+ * 里由设置同步过来（`mutableStateOf` 写入即触发重组），卡片直接读它。
+ * 代价是它不是「每棵子树各自一份」，但个性化本来就该全局一致。
+ */
+object PersonalizationHolder {
+    private val state = androidx.compose.runtime.mutableStateOf(Personalization())
+
+    var current: Personalization
+        get() = state.value
+        set(value) {
+            state.value = value
+        }
+}
 
 /**
  * 各视图共用的配色规则。
@@ -67,17 +93,42 @@ object TodoColors {
 
     data class Palette(val container: Color, val accent: Color)
 
-    fun paletteOf(todo: Todo, now: Long, zone: ZoneId): Palette {
+    /**
+     * 卡片配色。
+     *
+     * [personalization] 决定「按什么上色」与具体颜色（设置 → 个性化）：
+     * * 按状态（默认）：未来 / 即将 / 进行中 / 已过去；
+     * * 按提醒方式：通知 / 闹钟式 / 不通知；
+     * * 统一颜色：只靠左侧色条与状态文字区分。
+     *
+     * **已完成永远用灰色**——它表达「做完了」，不该被个性化改掉，
+     * 否则「红色 = 会响的闹钟」和「红色 = 已完成」会同时出现。
+     */
+    fun paletteOf(
+        todo: Todo,
+        now: Long,
+        zone: ZoneId,
+        personalization: Personalization = Personalization(),
+    ): Palette {
         if (todo.isDone) {
             return Palette(Color(0xFFE8E8EC), Color(0xFF9AA0A6))
         }
-        return when (TodoClassifier.bucketOf(todo, now)) {
-            TimeBucket.FUTURE -> Palette(Color(0xFFE3F0FF), Color(0xFF3B82F6))
-            TimeBucket.SOON -> Palette(Color(0xFFFFF0DB), Color(0xFFF59E0B))
-            TimeBucket.ONGOING -> Palette(Color(0xFFE3F8E9), Color(0xFF16A34A))
-            TimeBucket.PAST -> Palette(Color(0xFFEFEFF2), Color(0xFF9AA0A6))
+        val accent = when (personalization.colorMode) {
+            CardColorMode.STATUS -> personalization.statusColor(TodoClassifier.bucketOf(todo, now))
+            CardColorMode.REMINDER -> personalization.reminderColor(todo.mode)
+            CardColorMode.MONO -> Personalization.MONO_ACCENT
         }
+        return fromAccent(Color(accent))
     }
+
+    /**
+     * 由强调色推出整张卡片的配色：浅底 = 白与强调色按固定比例混合。
+     *
+     * 为什么要算而不是让用户挑两个色：挑浅底很容易选中「字看不清」的组合，
+     * 而 0.14 这个比例是照着原有一套手写配色的观感定下来的。
+     */
+    fun fromAccent(accent: Color): Palette =
+        Palette(container = lerp(Color.White, accent, 0.14f), accent = accent)
 
     /** 月视图的红色深浅：档位越高表示当天越忙（图例用）。 */
     fun monthLevelColor(level: Int): Color = when (level) {
@@ -410,7 +461,7 @@ private fun WeekBlock(
     // 整列看上去是「整体偏左」。再窄也保证宽度为正，否则 width() 会抛异常。
     val blockWidth = (laneWidth - WEEK_BLOCK_GAP * 2).coerceAtLeast(1.dp)
     val blockHeight = maxOf(hourHeight * (block.endHour - block.startHour).toFloat(), MIN_EVENT_HEIGHT)
-    val palette = TodoColors.paletteOf(block.todo, now, zone)
+    val palette = TodoColors.paletteOf(block.todo, now, zone, PersonalizationHolder.current)
     // 浅色底配黑字、深色底配白字，任何状态色下都读得清
     val textColor = if (palette.accent.luminance() > 0.5f) Color.Black else Color.White
 
@@ -550,7 +601,7 @@ fun TodoRowCard(
     modifier: Modifier = Modifier,
 ) {
     val classification = TodoClassifier.classify(todo, now)
-    val palette = TodoColors.paletteOf(todo, now, zone)
+    val palette = TodoColors.paletteOf(todo, now, zone, PersonalizationHolder.current)
 
     Card(
         modifier = modifier

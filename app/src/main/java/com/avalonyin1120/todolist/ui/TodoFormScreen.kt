@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import java.time.LocalDate
 import java.time.YearMonth
 import androidx.compose.material3.AlertDialog
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
+import com.avalonyin1120.todolist.domain.NaturalLanguage
 import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.RecurrenceExpander
 import com.avalonyin1120.todolist.domain.RecurrenceOptions
@@ -81,6 +83,8 @@ fun TodoFormScreen(
     isEditing: Boolean,
     /** 是否来自「仅修改重复待办的这一次」 */
     oneOffEdit: Boolean = false,
+    /** 是否显示「一句话新建」（设置里可关）。 */
+    naturalLanguageEnabled: Boolean = false,
     onBack: () -> Unit,
     onSubmit: () -> Unit,
 ) {
@@ -118,6 +122,7 @@ fun TodoFormScreen(
         TodoFormContent(
             form = form,
             oneOffEdit = oneOffEdit,
+            naturalLanguageEnabled = naturalLanguageEnabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(padding),
@@ -139,6 +144,8 @@ fun TodoFormContent(
     form: DraftFormStateHolder,
     modifier: Modifier = Modifier,
     oneOffEdit: Boolean = false,
+    /** 是否显示「一句话新建」（设置里可关，关掉后解析器完全不会被调用）。 */
+    naturalLanguageEnabled: Boolean = false,
 ) {
     val state by form.state.collectAsStateWithLifecycle()
     val errors by form.errors.collectAsStateWithLifecycle()
@@ -154,6 +161,13 @@ fun TodoFormContent(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(FORM_CARD_GAP),
     ) {
+        // ---------------------------------------------------------------- 一句话新建
+        // 放在最上面：它替用户省掉下面所有字段的填写，位置必须在「名称」之前，
+        // 否则用户先手打了一遍名字才发现上面有个能省事的东西。
+        if (naturalLanguageEnabled) {
+            NaturalLanguageCard(form = form, zone = zone)
+        }
+
         // ---------------------------------------------------------------- 名称
         FormCard {
             OutlinedTextField(
@@ -862,3 +876,75 @@ internal fun deadlineIsoForCurrentRule(state: DraftFormState, zone: ZoneId): Str
     return RecurrenceExpander.endDateForCount(todo, count, zone)
         ?.format(DateTimeFormatter.ISO_LOCAL_DATE)
 }
+/**
+ * 「一句话新建」卡片。
+ *
+ * 只做一件事：把一句中文交给 [NaturalLanguage] 解析，然后把结果**回填进表单**。
+ * 为什么不直接建待办：解析器只认一张固定的词表，用户必须能看见它读成了什么、
+ * 并且在保存前改掉。所以这里是「填表」而不是「提交」。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NaturalLanguageCard(form: DraftFormStateHolder, zone: ZoneId) {
+    var input by rememberSaveable { mutableStateOf("") }
+    var matched by remember { mutableStateOf<List<String>>(emptyList()) }
+    var hint by remember { mutableStateOf<String?>(null) }
+
+    FormCard(title = "一句话新建") {
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            label = { Text("说一句话") },
+            placeholder = { Text("例如：明天下午三点半开周会，提前 20 分钟") },
+            maxLines = 3,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_NL_FIELD),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    val parsed = NaturalLanguage.parse(input, System.currentTimeMillis(), zone)
+                    if (parsed == null) {
+                        matched = emptyList()
+                        hint = "没认出时间。可以试试「明天下午 3 点」「每周一 9 点」「每月 1 号」"
+                    } else {
+                        form.applyParsed(parsed)
+                        matched = parsed.matched
+                        hint = if (parsed.movedToTomorrow) {
+                            "这句话里的时刻今天已经过了，已排到明天同一时刻。"
+                        } else {
+                            "已填进下面的表单，可直接改。"
+                        }
+                        input = ""
+                    }
+                },
+                enabled = input.isNotBlank(),
+                modifier = Modifier.testTag(TAG_NL_PARSE),
+            ) { Text("解析并填表") }
+        }
+        hint?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (matched.isNotEmpty()) {
+            Text(
+                text = "识别到：" + matched.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag(TAG_NL_MATCHED),
+            )
+        }
+        Text(
+            text = "只认日期、时间、重复、提前量这四类词；其余原样作为名称。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+// 「一句话新建」的三个测试标签
+const val TAG_NL_FIELD = "form_nl_field"
+const val TAG_NL_PARSE = "form_nl_parse"
+const val TAG_NL_MATCHED = "form_nl_matched"

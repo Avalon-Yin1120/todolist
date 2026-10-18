@@ -37,7 +37,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.avalonyin1120.todolist.domain.Personalization
 import com.avalonyin1120.todolist.domain.ReminderMode
+import com.avalonyin1120.todolist.domain.TimeBucket
 import com.avalonyin1120.todolist.domain.WeekWindow
 
 /**
@@ -67,6 +69,8 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit = {},
     /** 打开「隐私」页 */
     onOpenPrivacy: () -> Unit = {},
+    /** 打开「个性化」页 */
+    onOpenPersonalization: () -> Unit = {},
     /** 版本与构建信息，用于「版本号」一行与详情弹窗 */
     version: VersionInfo = VersionInfo(),
     /** 当前本机待办数量，版本详情里展示 */
@@ -220,6 +224,15 @@ fun SettingsScreen(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+            SectionTitle("个性化")
+            SettingRow(
+                title = "颜色与快捷按钮",
+                subtitle = "待办卡片的配色依据、" + "「提前提醒」的快捷按钮，" + "以及「一句话新建」开关",
+                tag = TAG_OPEN_PERSONALIZATION,
+                onClick = onOpenPersonalization,
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             SectionTitle("关于")
             SettingRow(
                 title = "关于待办提醒",
@@ -530,6 +543,10 @@ data class SettingsUiState(
     val weekViewStartHour: Int = WeekWindow.DEFAULT_START_HOUR,
     /** 周视图纵向显示的结束小时 */
     val weekViewEndHour: Int = WeekWindow.DEFAULT_END_HOUR,
+    /** 个性化：卡片配色依据、各类颜色、提前提醒快捷按钮。 */
+    val personalization: Personalization = Personalization(),
+    /** 「一句话新建待办」是否启用（设置里可关）。 */
+    val naturalLanguageEnabled: Boolean = true,
 ) {
     /** 时间轴窗口文案，例如 `06:00 – 22:00`。 */
     fun weekWindowLabel(): String =
@@ -552,6 +569,28 @@ sealed interface SettingsChange {
 
     /** 恢复周视图时段的默认值（06:00 – 22:00）。 */
     data object ResetWeekWindow : SettingsChange
+
+    // ---------------------------------------------------------------- 个性化
+
+    /** 卡片配色的依据：按状态 / 按提醒方式 / 统一颜色。 */
+    data class CardColorMode(
+        val value: com.avalonyin1120.todolist.domain.CardColorMode,
+    ) : SettingsChange
+
+    /** 某个状态的强调色（ARGB）。 */
+    data class StatusColor(val bucket: TimeBucket, val argb: Long) : SettingsChange
+
+    /** 某种提醒方式的强调色（ARGB）。 */
+    data class ReminderColor(val mode: ReminderMode, val argb: Long) : SettingsChange
+
+    /** 勾选 / 取消表单里某个「提前提醒」快捷按钮。 */
+    data class ToggleLeadPreset(val minutes: Int) : SettingsChange
+
+    /** 个性化整体恢复默认（界面上还要二次确认）。 */
+    data object ResetPersonalization : SettingsChange
+
+    /** 「一句话新建待办」开关。 */
+    data class NaturalLanguage(val value: Boolean) : SettingsChange
 }
 
 /**
@@ -578,3 +617,4 @@ const val TAG_WEEK_RESET = "week_reset"
 const val TAG_HOUR_PICKER_DIALOG = "hour_picker_dialog"
 const val TAG_HOUR_PICKER_CANCEL = "hour_picker_cancel"
 const val TAG_HOUR_OPTION_PREFIX = "hour_option_"
+const val TAG_OPEN_PERSONALIZATION = "open_personalization"

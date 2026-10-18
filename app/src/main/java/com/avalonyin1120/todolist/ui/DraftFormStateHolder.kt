@@ -4,6 +4,7 @@ import com.avalonyin1120.todolist.domain.Clock
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
 import com.avalonyin1120.todolist.domain.MonthDays
+import com.avalonyin1120.todolist.domain.NaturalLanguage
 import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.ReminderTime
@@ -237,6 +238,29 @@ class DraftFormStateHolder(
     }
 
     /** 设置重复截止日期（yyyy-MM-dd）；null 表示不限。 */
+    /**
+     * 把「一句话解析」的结果回填进当前表单。
+     *
+     * 只覆盖解析出来的东西（名称 / 起止时间 / 重复 / 提前量），其余保持原样：
+     * 用户的意图是「补全我这句描述」，不是「把我已经填好的表清空重来」。
+     * 尤其是 [current].id / mode / 重复次数与截止日期都不动。
+     */
+    fun applyParsed(parsed: NaturalLanguage.Parsed) {
+        val current = _state.value
+        val start = parsed.startAt
+        _state.value = current.copy(
+            name = parsed.name.take(80),
+            startAt = start,
+            endAt = start + parsed.durationMinutes * 60_000L,
+            leadMinutes = parsed.leadMinutes.coerceIn(0, ReminderTime.MAX_LEAD_MINUTES),
+            leadInput = parsed.leadMinutes
+                .coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
+                .toEditableLeadInput(),
+            recurrence = parsed.recurrence,
+            weekDays = parsed.weekDays,
+            monthDays = parsed.monthDays,
+        )
+    }
     fun setRecurrenceEndDate(value: String?) {
         _state.value = _state.value.copy(recurrenceEndDate = value?.takeIf { it.isNotBlank() })
     }

@@ -145,6 +145,13 @@ fun TodoRoute(
     val screen = uiState.screen
     val settings = uiState.settings
 
+    // 个性化设置同步给卡片（见 PersonalizationHolder 的说明）。
+    // 用 LaunchedEffect 而不是直接在组合里赋值：组合期写状态会触发「读了自己刚写的状态」告警。
+    LaunchedEffect(settings.personalization) {
+        PersonalizationHolder.current = settings.personalization
+    }
+
+
     // 记录当前所在页面，供返回键使用
     var lastScreen by remember { mutableStateOf(Screen.MAIN) }
     LaunchedEffect(screen) { lastScreen = screen }
@@ -158,6 +165,7 @@ fun TodoRoute(
             Screen.REMINDER_HEALTH -> viewModel.closeReminderHealth()
             Screen.ABOUT -> viewModel.closeAbout()
             Screen.PRIVACY -> viewModel.closePrivacy()
+            Screen.PERSONALIZATION -> viewModel.closePersonalization()
             Screen.MAIN -> Unit
         }
     }
@@ -196,6 +204,7 @@ fun TodoRoute(
                 // 整屏表单：字段多，需要完整高度
                 Screen.FORM -> TodoFormScreen(
                     form = viewModel.form,
+                    naturalLanguageEnabled = settings.naturalLanguageEnabled,
                     isEditing = uiState.editState.editingId != 0L,
                     onBack = viewModel::dismissForm,
                     onSubmit = viewModel::submitForm,
@@ -216,6 +225,7 @@ fun TodoRoute(
                     onOpenReminderHealth = viewModel::openReminderHealth,
                     onOpenAbout = viewModel::openAbout,
                     onOpenPrivacy = viewModel::openPrivacy,
+                    onOpenPersonalization = viewModel::openPersonalization,
                     version = uiState.version,
                     todoCount = uiState.todos.size,
                 )
@@ -246,6 +256,12 @@ fun TodoRoute(
                         viewModel::requestIgnoreBatteryOptimization,
                     onBack = viewModel::closeReminderHealth,
                     onOpenReminderLog = viewModel::openReminderLog,
+                )
+
+                Screen.PERSONALIZATION -> PersonalizationScreen(
+                    state = settings,
+                    onChange = viewModel::changeSetting,
+                    onBack = viewModel::closePersonalization,
                 )
 
                 Screen.REMINDER_LOG -> ReminderLogScreen(onBack = viewModel::closeReminderLog)
@@ -289,7 +305,7 @@ fun TodoRoute(
 private fun screenDepth(screen: Screen): Int = when (screen) {
     Screen.MAIN -> 0
     Screen.SETTINGS, Screen.FORM -> 1
-    Screen.ABOUT, Screen.PRIVACY -> 2
+    Screen.ABOUT, Screen.PRIVACY, Screen.PERSONALIZATION -> 2
     Screen.REMINDER_HEALTH -> 3
     Screen.REMINDER_LOG -> 4
 }

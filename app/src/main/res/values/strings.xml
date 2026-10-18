@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">待办提醒</string>
+    <!-- 桌面名：预览版带「·预览」后缀，避免与已装的正式版在桌面上一模一样分不清。
+         发布正式版时连同 applicationId 一起改回「待办提醒」。 -->
+    <string name="app_name">待办提醒·预览</string>
 
     <!-- 列表页 -->
     <string name="list_title">待办提醒</string>

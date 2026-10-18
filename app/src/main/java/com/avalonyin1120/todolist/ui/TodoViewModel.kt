@@ -13,9 +13,11 @@ import com.avalonyin1120.todolist.data.TodoDraft
 import com.avalonyin1120.todolist.data.TodoRepository
 import com.avalonyin1120.todolist.domain.Clock
 import com.avalonyin1120.todolist.domain.FormError
+import com.avalonyin1120.todolist.domain.Personalization
 import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.Todo
 import com.avalonyin1120.todolist.domain.WeekWindow
+import com.avalonyin1120.todolist.notify.ReminderLog
 import com.avalonyin1120.todolist.reminder.SchedulingCoordinator
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -33,7 +35,7 @@ import java.time.ZoneId
 enum class NavTab { TODO, DAY, WEEK, MONTH }
 
 /** 顶层界面：主界面、设置页、表单页与两个说明页。 */
-enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH, ABOUT, PRIVACY, REMINDER_LOG }
+enum class Screen { MAIN, SETTINGS, FORM, REMINDER_HEALTH, ABOUT, PRIVACY, REMINDER_LOG, PERSONALIZATION }
 
 /** 列表内的分组方式。 */
 enum class ListGrouping { BY_TIME, BY_DONE }
@@ -441,10 +443,14 @@ class TodoViewModel(
                 settings.lastLeadMinutes = draft.leadMinutes
             }
 
-            val result = if (draft.id == 0L) {
+            val isNew = draft.id == 0L
+            val result = if (isNew) {
                 coordinator.create(draft)
             } else {
                 coordinator.update(draft)
+            }
+            if (result != null) {
+                logTodoWrite(isNew, draft)
             }
             // 「仅修改这一次」：独立待办保存成功后，才在来源规则上把这一天标记为例外，
             // 避免同一天既出现原规则的场次、又出现这条独立待办
@@ -490,6 +496,14 @@ class TodoViewModel(
     fun confirmDelete(todoId: Long) {
         updateLocal { it.copy(dialog = null) }
         viewModelScope.launch {
+            // 删之前先记名字：删完就查不到了，日志里只剩一个 id 没有排查价值
+            val name = localState.value.pendingRecurringTodo?.takeIf { it.id == todoId }?.name
+                ?: uiState.value.todos.firstOrNull { it.id == todoId }?.name
+            ReminderLog.add(
+                ReminderLog.CAT_DELETE,
+                "删除待办：" + (name?.let { "「$it」" } ?: "id=$todoId"),
+                names = listOfNotNull(name),
+            )
             coordinator.delete(todoId)
             if (editState.value.editingId == todoId) dismissForm()
         }
@@ -558,6 +572,11 @@ class TodoViewModel(
      */
     fun toggleDone(todo: Todo) {
         viewModelScope.launch {
+            ReminderLog.add(
+                ReminderLog.CAT_DONE,
+                (if (todo.isDone) "取消完成：" else "标记完成：") + "「${todo.name}」",
+                names = listOf(todo.name),
+            )
             if (todo.recurrence.isRecurring) {
                 coordinator.setOccurrenceDone(
                     todoId = todo.id,
@@ -576,9 +595,17 @@ class TodoViewModel(
 
     fun closeSettings() = updateLocal { it.copy(screen = Screen.MAIN) }
 
+    /** 打开「个性化」页（配色与快捷按钮）。 */
+    fun openPersonalization() = updateLocal { it.copy(screen = Screen.PERSONALIZATION) }
+
+    fun closePersonalization() = updateLocal { it.copy(screen = Screen.SETTINGS) }
+
     fun changeSetting(change: SettingsChange) {
         when (change) {
-            is SettingsChange.DefaultMode -> settings.defaultReminderMode = change.value
+            is SettingsChange.DefaultMode -> {
+                settings.defaultReminderMode = change.value
+                ReminderLog.add(ReminderLog.CAT_SETTING, "默认提醒方式改为 ${change.value.name}")
+            }
             is SettingsChange.ConfirmDelete -> settings.confirmBeforeDelete = change.value
             is SettingsChange.WarnOverlap -> settings.warnOnOverlap = change.value
             is SettingsChange.NotificationSound -> settings.notificationSound = change.value
@@ -595,8 +622,71 @@ class TodoViewModel(
                 settings.weekViewStartHour = WeekWindow.DEFAULT_START_HOUR
                 settings.weekViewEndHour = WeekWindow.DEFAULT_END_HOUR
             }
+
+            // ------------------------------------------------ 个性化
+            is SettingsChange.CardColorMode -> updatePersonalization {
+                it.copy(colorMode = change.value)
+            }
+
+            is SettingsChange.StatusColor -> updatePersonalization {
+                it.copy(statusColors = it.statusColors + (change.bucket to change.argb))
+            }
+
+            is SettingsChange.ReminderColor -> updatePersonalization {
+                it.copy(reminderColors = it.reminderColors + (change.mode to change.argb))
+            }
+
+            is SettingsChange.ToggleLeadPreset -> updatePersonalization { current ->
+                val next = if (change.minutes in current.leadPresets) {
+                    // 至少留一个，否则表单里那排按钮会整块消失、用户没法再点回来
+                    (current.leadPresets - change.minutes).ifEmpty { current.leadPresets }
+                } else {
+                    (current.leadPresets + change.minutes)
+                        .take(Personalization.MAX_PRESETS)
+                }
+                current.copy(leadPresets = next)
+            }
+
+            SettingsChange.ResetPersonalization -> {
+                settings.personalization = Personalization()
+                ReminderLog.add(ReminderLog.CAT_SETTING, "个性化设置已恢复默认")
+            }
+
+            is SettingsChange.NaturalLanguage -> {
+                settings.naturalLanguageEnabled = change.value
+                ReminderLog.add(
+                    ReminderLog.CAT_SETTING,
+                    "一句话新建待办：${if (change.value) "开" else "关"}",
+                )
+            }
         }
         updateLocal { it.copy(settings = readSettings()) }
+    }
+
+    /** 改个性化：写回存储、刷新界面状态，并记一条日志（改配色这种操作很难靠回忆复盘）。 */
+    private fun updatePersonalization(block: (Personalization) -> Personalization) {
+        settings.personalization = block(settings.personalization).normalized()
+        ReminderLog.add(ReminderLog.CAT_SETTING, "个性化设置已修改")
+    }
+
+    /** 日志里显示时间用；与提醒日志同一套格式，避免两份日志对不上。 */
+    private val LOG_TIME_FORMAT =
+        java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+
+    /** 记一条「新增 / 修改待办」的日志（名称同时作为脱敏目标传进去）。 */
+    private fun logTodoWrite(isNew: Boolean, draft: TodoDraft) {
+        val whenText = LOG_TIME_FORMAT.format(java.util.Date(draft.startAt))
+        val extra = buildString {
+            append("｜时间=").append(whenText)
+            append("｜方式=").append(draft.mode.name)
+            if (draft.recurrence.isRecurring) append("｜重复=").append(draft.recurrence.name)
+            if (draft.leadMinutes > 0) append("｜提前=").append(draft.leadMinutes).append("分")
+        }
+        ReminderLog.add(
+            if (isNew) ReminderLog.CAT_ADD else ReminderLog.CAT_EDIT,
+            (if (isNew) "新增待办：" else "修改待办：") + "「${draft.name}」" + extra,
+            names = listOf(draft.name),
+        )
     }
 
     private fun readSettings() = SettingsUiState(
@@ -607,6 +697,9 @@ class TodoViewModel(
         notificationSound = settings.notificationSound,
         weekViewStartHour = settings.weekViewStartHour,
         weekViewEndHour = settings.weekViewEndHour,
+        personalization = settings.personalization,
+        naturalLanguageEnabled = settings.naturalLanguageEnabled,
+        confirmedHealthItems = settings.confirmedHealthItems,
     )
 
     // ---------------------------------------------------------------- 权限与提示
