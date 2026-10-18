@@ -122,21 +122,26 @@ app/src/main/java/com/example/todolist/
 
 ## 3. 构建与运行
 
-### 3.1 本机环境
+### 3.1 开发环境（作者本机，路径请换成你自己的）
 
-| 项目 | 位置 |
-|---|---|
-| JDK 21 | `D:\Download\java` |
-| Android SDK | `D:\Android\sdk`（platform-tools 37.0.1 / android-35 / build-tools 35.0.0 / emulator 37.2.12） |
-| Gradle 8.11.1 | `D:\Android\gradle-8.11.1` |
-| Gradle 依赖缓存 | `D:\Android\gradle-home` |
-| AVD | `todo_api35`（API 35，google_apis，x86_64） |
+| 项目 | 作者本机位置 | 说明 |
+|---|---|---|
+| JDK | `D:\Download\java`（JDK 21） | 只要 `JAVA_HOME` 指向 JDK 17+ 即可 |
+| Android SDK | `D:\Android\sdk`（platform-tools / android-35 / build-tools 35.0.0 / emulator） | 用 Android Studio 自带的也行 |
+| Gradle | 用仓库里的 `gradlew`，无需另装 | wrapper 已锁定 8.11.1 |
+| Gradle 依赖缓存 | `D:\Android\gradle-home`（本机为了离线构建单独指定） | 不设就用默认的 `~/.gradle` |
+| AVD | `todo_api35`（API 35，google_apis，x86_64） | 仪器化测试用 |
 
-> 工程路径 `D:\Download\Todolist` 刻意不含空格与中文；所有参与编译的路径都遵守该约束。
+> 两点提醒：
+> 1. **不要**把 `org.gradle.java.home` 写进仓库的 `gradle.properties`——那会把 JDK 路径钉死在
+>    某一台机器上。用环境变量 `JAVA_HOME`，或者写进用户级的 `~/.gradle/gradle.properties`。
+> 2. 作者刻意把工程放在**不含空格与中文**的路径下（`D:\Download\Todolist`）：AGP 与
+>    NDK 工具链在含空格/中文的路径上偶发解析失败，这不是本项目的特殊要求，但能省掉一类怪问题。
 
 ### 3.2 常用命令
 
 ```powershell
+# 按自己的环境改这三行；不设 GRADLE_USER_HOME 就会用 ~/.gradle
 $env:JAVA_HOME='D:\Download\java'
 $env:ANDROID_HOME='D:\Android\sdk'
 $env:GRADLE_USER_HOME='D:\Android\gradle-home'
@@ -147,8 +152,8 @@ cd D:\Download\Todolist
 .\gradlew.bat connectedDebugAndroidTest  # 仪器化 UI 测试（需要模拟器/真机）
 
 # 发布包：R8 + 资源压缩 + release 签名（约 1.4 MB，debug 包约 17 MB）
-.\gradlew.bat assembleRelease            # 产出 app\build\outputs\apk\release\app-release.apk
-.\gradlew.bat bundleRelease              # 上架用 AAB
+.\gradlew.bat assembleRelease            # 产出 app\build\outputs\apk\release\app-release.apk（分发用这个）
+.\gradlew.bat bundleRelease              # AAB，目前用不到（开源分发用 APK）
 
 # 发布前建议在有网环境跑一次完整检查（本机离线缓存里没有 lint-gradle，见 §7）
 .\gradlew.bat :app:lint

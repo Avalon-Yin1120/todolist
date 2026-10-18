@@ -6,6 +6,7 @@
 
 # 二进制
 *.png binary
+*.wav binary
 *.jar binary
 *.apk binary
 *.aab binary
