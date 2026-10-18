@@ -127,6 +127,22 @@ python tools\gen_third_party_notices.py build\deps-runtime.log
 - `com.google.guava:listenablefuture:1.0`
 
 
+## 附加说明：APK 里内嵌的 C++ 代码
+
+`androidx.graphics:graphics-path` 的 `lib/*/libandroidx.graphics.path.so` 里包含
+**Skia** 的 `SkPath` 移植代码（BSD-3-Clause，Copyright 2006 The Android Open Source
+Project）。BSD-3-Clause 要求在二进制分发时保留版权声明，因此在此单独声明：
+
+> Copyright 2006 The Android Open Source Project
+> Redistribution and use in source and binary forms, with or without modification,
+> are permitted provided that the above copyright notice and this notice are retained.
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY EXPRESS OR
+> IMPLIED WARRANTIES ARE DISCLAIMED.
+
+（这是本项目 APK 里**唯一**一段非 Apache-2.0 的第三方代码；BSD-3-Clause 同样是宽松许可，
+没有传染性，只要求署名。）
+
+
 ## 使用这些组件时需要遵守的义务
 
 Apache-2.0 的要求只有三条，都很轻：

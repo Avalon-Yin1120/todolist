@@ -106,6 +106,20 @@ def main():
         out.append("")
 
     out.append(
+        "\n## 附加说明：APK 里内嵌的 C++ 代码\n\n"
+        "`androidx.graphics:graphics-path` 的 `lib/*/libandroidx.graphics.path.so` 里包含\n"
+        "**Skia** 的 `SkPath` 移植代码（BSD-3-Clause，Copyright 2006 The Android Open Source\n"
+        "Project）。BSD-3-Clause 要求在二进制分发时保留版权声明，因此在此单独声明：\n\n"
+        "> Copyright 2006 The Android Open Source Project\n"
+        "> Redistribution and use in source and binary forms, with or without modification,\n"
+        "> are permitted provided that the above copyright notice and this notice are retained.\n"
+        "> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS \"AS IS\" AND ANY EXPRESS OR\n"
+        "> IMPLIED WARRANTIES ARE DISCLAIMED.\n\n"
+        "（这是本项目 APK 里**唯一**一段非 Apache-2.0 的第三方代码；BSD-3-Clause 同样是宽松许可，\n"
+        "没有传染性，只要求署名。）\n"
+    )
+
+    out.append(
         "\n## 使用这些组件时需要遵守的义务\n\n"
         "Apache-2.0 的要求只有三条，都很轻：\n\n"
         "1. 分发时附上许可证副本（本仓库的 `LICENSE` 与每个上游项目的许可证）；\n"
