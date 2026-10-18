@@ -34,6 +34,27 @@ data class Personalization(
         get() = this == Personalization()
 
     /**
+     * 设置页那排芯片要显示的分钟数：[MINUTE_CHOICES] 与「已选中的自定义项」的并集。
+     *
+     * 只用固定候选的话，用户填了「提前 25 分钟」之后在设置页看不到这一项，
+     * 也就没法单独取消它（只能把设置全部恢复默认）——那等于「加得上、退不掉」。
+     */
+    val leadChipChoices: List<Int>
+        get() = (MINUTE_CHOICES + leadPresets).distinct().sorted()
+
+    /** 快捷按钮已经选满 [MAX_PRESETS] 个。此时再加新的没有位置。 */
+    val isLeadPresetsFull: Boolean
+        get() = leadPresets.size >= MAX_PRESETS
+
+    /**
+     * 这个分钟数现在还能不能点。
+     *
+     * 已选中的永远可点（用来取消）；没选中的，选满之后一律不可点，
+     * 免得点了没反应还让人以为程序坏了。
+     */
+    fun canToggleLead(minutes: Int): Boolean = minutes in leadPresets || !isLeadPresetsFull
+
+    /**
      * 规范化：夹取越界值、去重、排序。
      *
      * 每次写入前都过一遍，于是即使设置文件被手改坏，界面上也不会出现

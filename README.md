@@ -3,11 +3,12 @@
 Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止时间 / 提前提醒量），
 按时间顺序展示，到点提醒。支持**周期待办**、**三种提醒方式**、**日/周/月三种日历视图**。
 
-- 包名 `com.avalonyin1120.todolist`｜版本 `1.0.1-preview2`（**预览版**；版本号带 preview，
+- 包名 `com.avalonyin1120.todolist`（**预览阶段临时加 `.preview` 后缀**，好让测试包与已装的
+  `1.0.0` 正式版共存；发正式版时改回来）｜版本 `1.2.0-preview3`（**预览版**；版本号带 preview，
   「设置 → 版本号」会显示「预览构建」）
 - **默认用通知式提醒**（安静、不需要特殊权限、通知上就能直接完成）；想要到点响铃 + 亮屏 + 全屏提醒页，
   在设置的「新建待办时默认选择」里改成「闹钟式」（也可以改成「不通知」），或在单条待办上单独选
-- **不联网**：没有 `INTERNET` 权限，数据只存在本机；开源协议 Apache-2.0，见 [LICENSE](LICENSE)
+- **不联网**：没有 `INTERNET` 权限，数据只存在本机；开源协议 **GPLv3**，见 [LICENSE](LICENSE)
 
 > ⚠️ **免责声明**
 > 本应用依赖 Android 的闹钟与通知机制，**系统的省电策略、厂商的后台限制、「强行停止」后的广播限制
@@ -871,11 +872,11 @@ adb shell setprop debug.todo.anim_ms 0
 
 | 项 | 状态 | 说明 / 证据 |
 |---|---|---|
-| 包名 | ✅ | `com.avalonyin1120.todolist`；开机后不可修改 |
-| 版本号 | ✅ | 当前 `versionCode = 3`、`versionName = "1.0.1-preview2"`；`aapt2 dump badging` 实测与产物一致 |
+| 包名 | ✅ | `com.avalonyin1120.todolist`（预览包为 `…​.preview`，与已装正式版共存）；改名等于换应用 |
+| 版本号 | ✅ | 当前 `versionCode = 10`、`versionName = "1.2.0-preview3"`；`aapt2 dump badging` 实测与产物一致 |
 | release 签名 | ✅ | `apksigner verify` 实测 v2 + v3 已签名，DN `CN=Avalon-Yin1120`；keystore 与口令**不在版本库**里，务必离线备份两处以上 |
 | R8 + 资源压缩 | ✅ | release 包 **1.4 MB** 量级（debug 约 16.5 MB）；`app/proguard-rules.pro` 逐条写了为什么需要那条规则 |
-| 单元测试 | ✅ | **352 条 / 21 个类**全绿（`:app:testDebugUnitTest`，Robolectric，无需设备） |
+| 单元测试 | ✅ | **388 条 / 23 个类**全绿（`:app:testDebugUnitTest`，Robolectric，无需设备） |
 | 数据库迁移策略 | ✅ | 显式 `MIGRATIONS` 数组，没有 `fallbackToDestructiveMigration`（升级即清库）。加迁移的步骤写在 `TodoDatabase.MIGRATIONS` 注释里 |
 | 权限最小化 | ✅ | release 清单实测 11 条 = 9 个自有权限 + WorkManager 自动声明的 `ACCESS_NETWORK_STATE` + AndroidX 自动生成的 `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`；**没有 `INTERNET`**、**没有 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`** |
 | 无联网 | ✅ | 没有 `INTERNET` 权限 ⇒ 系统在内核层面拒绝本进程建连。数据全部留在本机 Room 数据库里 |
@@ -894,5 +895,5 @@ adb shell setprop debug.todo.anim_ms 0
 ### 10.5 每次发版的固定流程
 
 改代码 → `versionCode + 1`、必要时改 `versionName` → `:app:testDebugUnitTest` →
-`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（`v1.0.1-preview2`）→
+`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（如 `v1.2.0-preview3`）→
 GitHub Release 上传 APK + SHA-256 + 说明。

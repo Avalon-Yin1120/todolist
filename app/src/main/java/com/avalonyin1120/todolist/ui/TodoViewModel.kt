@@ -641,14 +641,17 @@ class TodoViewModel(
             }
 
             is SettingsChange.ToggleLeadPreset -> updatePersonalization { current ->
-                val next = if (change.minutes in current.leadPresets) {
-                    // 至少留一个，否则表单里那排按钮会整块消失、用户没法再点回来
-                    (current.leadPresets - change.minutes).ifEmpty { current.leadPresets }
-                } else {
-                    (current.leadPresets + change.minutes)
-                        .take(Personalization.MAX_PRESETS)
+                when {
+                    // 取消：至少留一个，否则表单里那排按钮会整块消失、用户没法再点回来
+                    change.minutes in current.leadPresets ->
+                        current.copy(
+                            leadPresets = (current.leadPresets - change.minutes)
+                                .ifEmpty { current.leadPresets },
+                        )
+                    // 已满：明确不加（界面那边按钮已置灰，这里是第二道防线）
+                    current.isLeadPresetsFull -> current
+                    else -> current.copy(leadPresets = current.leadPresets + change.minutes)
                 }
-                current.copy(leadPresets = next)
             }
 
             SettingsChange.ResetPersonalization -> {

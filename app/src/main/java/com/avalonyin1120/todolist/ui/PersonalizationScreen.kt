@@ -160,17 +160,41 @@ fun PersonalizationScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // 芯片 = 固定候选 ∪ 已选中的自定义项。自定义项也得能看见、能取消，
+                // 否则「加得上、退不掉」，只能恢复默认把配色一起清了。
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Personalization.MINUTE_CHOICES.forEach { minutes ->
+                    personalization.leadChipChoices.forEach { minutes ->
+                        val checked = minutes in personalization.leadPresets
                         FilterChip(
-                            selected = minutes in personalization.leadPresets,
+                            selected = checked,
+                            // 选满后没选中的芯片置灰：点了静默无效比置灰更伤人
+                            enabled = personalization.canToggleLead(minutes),
                             onClick = { onChange(SettingsChange.ToggleLeadPreset(minutes)) },
-                            label = { Text(if (minutes in personalization.leadPresets) "✓ " + leadPresetLabel(minutes) else leadPresetLabel(minutes)) },
+                            label = {
+                                Text(
+                                    if (checked) "✓ " + leadPresetLabel(minutes)
+                                    else leadPresetLabel(minutes)
+                                )
+                            },
                             modifier = Modifier.testTag("$TAG_LEAD_PRESET_PREFIX$minutes"),
                         )
                     }
-                }                // 自定义分钟数：候选只有 8 个，用户想要「提前 25 分钟」也得能填
+                }
+                if (personalization.isLeadPresetsFull) {
+                    Text(
+                        text = "已选满 ${Personalization.MAX_PRESETS} 个：先点上面任意一个已勾选的芯片取消，" +
+                            "再添加新的。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag(TAG_LEAD_FULL_HINT),
+                    )
+                }
+                // 自定义分钟数：候选只有 8 个，用户想要「提前 25 分钟」也得能填
                 var custom by remember { mutableStateOf("") }
+                val typed = custom.toIntOrNull()
+                val typedInRange = typed != null &&
+                    typed in Personalization.MIN_LEAD_MINUTES..Personalization.MAX_LEAD_MINUTES
+                val canAdd = typed != null && typedInRange && personalization.canToggleLead(typed)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         value = custom,
@@ -184,12 +208,15 @@ fun PersonalizationScreen(
                     Spacer(Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            custom.toIntOrNull()?.let { onChange(SettingsChange.ToggleLeadPreset(it)) }
+                            typed?.let { onChange(SettingsChange.ToggleLeadPreset(it)) }
                             custom = ""
                         },
-                        enabled = custom.toIntOrNull()?.let { it in 0..10080 } == true,
+                        enabled = canAdd,
                         modifier = Modifier.testTag(TAG_CUSTOM_LEAD_ADD),
-                    ) { Text("添加") }
+                    ) {
+                        // 填的正好是已选项时，这个按钮就是「取消」
+                        Text(if (typed != null && typed in personalization.leadPresets) "取消" else "添加")
+                    }
                 }
             }
 
@@ -343,3 +370,4 @@ const val TAG_RESET_CANCEL = "reset_personalization_cancel"
 const val TAG_DONE_COLOR_PREFIX = "done_color_"
 const val TAG_CUSTOM_LEAD_FIELD = "custom_lead_field"
 const val TAG_CUSTOM_LEAD_ADD = "custom_lead_add"
+const val TAG_LEAD_FULL_HINT = "lead_full_hint"

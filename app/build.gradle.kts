@@ -42,8 +42,8 @@ android {
         // versionCode 升到 4：这一版加了「个性化」「一句话新建」「事件日志」三块新功能，
         // 且 applicationId 加了 .preview 后缀（与已装的 1.0.0 共存）。
         // 纪律：每次发版 versionCode 必须 +1；versionName 只给人看。
-        versionCode = 9
-        versionName = "1.2.0-preview2"
+        versionCode = 10
+        versionName = "1.2.0-preview3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
