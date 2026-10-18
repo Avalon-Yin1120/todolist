@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -79,15 +80,25 @@ fun PersonalizationScreen(
             )
         },
     ) { padding ->
-        Column(
+        // 「颜色」与「快捷按钮」分成左右两栏：一屏同时看到两件事，不用上下滚来滚去。
+        // 两栏各自滚动（右栏更长：快捷按钮 + 一句话新建 + 恢复默认）。
+        // 窄屏上每栏约 160dp，所以色点与芯片会自动折行，自定义输入框也改成了上下排列。
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // ------------------------------------------------------------ 配色依据
+            // ================================================== 左栏：颜色
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .testTag(TAG_COLOR_COLUMN),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // ------------------------------------------------------------ 配色依据
             SettingsCard(title = "卡片颜色") {
                 Text(
                     text = "选一种依据，卡片底色会跟着它变。已完成一律是灰色（做完了就该一眼看出来）。",
@@ -114,7 +125,8 @@ fun PersonalizationScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 ColorRow(
-                    label = "已完成",
+                    // 不叫「已完成」：卡片标题已经是它，两行同名既难看也让自动化脚本分不清
+                    label = "颜色",
                     selected = personalization.doneColor,
                     onPick = { argb -> onChange(SettingsChange.DoneColor(argb)) },
                     tagPrefix = TAG_DONE_COLOR_PREFIX,
@@ -152,6 +164,16 @@ fun PersonalizationScreen(
                 }
             }
 
+            }
+
+            // ================================================== 右栏：快捷按钮
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .testTag(TAG_LEAD_COLUMN),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
             // ------------------------------------------------------------ 提前提醒按钮
             SettingsCard(title = "「提前提醒」的快捷按钮") {
                 Text(
@@ -195,24 +217,27 @@ fun PersonalizationScreen(
                 val typedInRange = typed != null &&
                     typed in Personalization.MIN_LEAD_MINUTES..Personalization.MAX_LEAD_MINUTES
                 val canAdd = typed != null && typedInRange && personalization.canToggleLead(typed)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // 栏宽只有 160dp 左右，输入框和按钮只能上下排（横排会把标签挤成省略号）
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(
                         value = custom,
                         onValueChange = { v -> custom = v.filter { it.isDigit() }.take(5) },
-                        label = { Text("自定义分钟（0–10080）") },
+                        label = { Text("自定义分钟") },
+                        placeholder = { Text("0–10080") },
                         singleLine = true,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .testTag(TAG_CUSTOM_LEAD_FIELD),
                     )
-                    Spacer(Modifier.width(8.dp))
                     Button(
                         onClick = {
                             typed?.let { onChange(SettingsChange.ToggleLeadPreset(it)) }
                             custom = ""
                         },
                         enabled = canAdd,
-                        modifier = Modifier.testTag(TAG_CUSTOM_LEAD_ADD),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(TAG_CUSTOM_LEAD_ADD),
                     ) {
                         // 填的正好是已选项时，这个按钮就是「取消」
                         Text(if (typed != null && typed in personalization.leadPresets) "取消" else "添加")
@@ -222,15 +247,14 @@ fun PersonalizationScreen(
 
             // ------------------------------------------------------------ 一句话新建
             SettingsCard(title = "一句话新建待办") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("启用「一句话」输入框", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            text = "在新增待办页顶部输入「明天下午三点开会，提前 20 分钟」，自动填好时间与重复。关掉后该输入框整块消失。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                // 栏宽只有 160dp：文字与开关并排会把说明挤成一列竖排的字，改成上下排
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("启用「一句话」输入框", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = "在新增待办页顶部输入「明天下午三点开会，提前 20 分钟」，自动填好时间与重复。关掉后该输入框整块消失。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Switch(
                         checked = state.naturalLanguageEnabled,
                         onCheckedChange = { onChange(SettingsChange.NaturalLanguage(it)) },
@@ -252,6 +276,7 @@ fun PersonalizationScreen(
                     enabled = !personalization.isDefault || !state.naturalLanguageEnabled,
                     modifier = Modifier.testTag(TAG_RESET_PERSONALIZATION),
                 ) { Text("恢复默认设置") }
+            }
             }
         }
     }
@@ -371,3 +396,7 @@ const val TAG_DONE_COLOR_PREFIX = "done_color_"
 const val TAG_CUSTOM_LEAD_FIELD = "custom_lead_field"
 const val TAG_CUSTOM_LEAD_ADD = "custom_lead_add"
 const val TAG_LEAD_FULL_HINT = "lead_full_hint"
+
+/** 两栏布局的左右两栏（测试用：确认颜色在左、快捷按钮在右）。 */
+const val TAG_COLOR_COLUMN = "personalization_color_column"
+const val TAG_LEAD_COLUMN = "personalization_lead_column"

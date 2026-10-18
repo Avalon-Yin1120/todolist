@@ -23,7 +23,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,7 +60,17 @@ fun CompactCalendar(
     selected: LocalDate?,
     today: LocalDate,
     onSelect: (LocalDate) -> Unit,
-    onMonthChange: (YearMonth) -> Unit,
+    /**
+     * 点了左/右翻月箭头：参数是**相对**位移（-1 / +1）。
+     *
+     * 调用方必须拿「当前值」去累加，**不能**在组合时先算好 `month.plusMonths(1)` 再回调。
+     * 后者是 v31 的真实 bug：连按两下时第二次点击用的还是组合时捕获的旧月份，
+     * 两次都算出同一个月，于是「连按翻页只动一格」（用户反馈：新增待办里调日期、
+     * 视图里跳转对话框都不灵，而视图顶部那排按钮因为按页码加减所以正常）。
+     */
+    onShiftMonth: (Int) -> Unit,
+    /** 手指横滑停稳在某个月：参数是绝对月份（滑动本来就知道自己停在哪一页）。 */
+    onSwipeMonth: (YearMonth) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // 初始页就是「当前月份」所在的绝对页：每次打开对话框都是新的组合，
@@ -72,9 +85,17 @@ fun CompactCalendar(
     // 下面两个 effect 的键都不含回调/月份，会长期存活。
     // LaunchedEffect 不会看到重建之后的新 lambda，所以闭包里的值必须用
     // rememberUpdatedState 取最新——否则 collect 里用的还是首次组合那个
-    // onMonthChange（以及过期的月份），上报会被静默丢弃或重复。
-    val currentOnMonthChange by rememberUpdatedState(onMonthChange)
+    // onSwipeMonth（以及过期的月份），上报会被静默丢弃或重复。
+    val currentOnSwipeMonth by rememberUpdatedState(onSwipeMonth)
     val currentMonth by rememberUpdatedState(month)
+
+    // 「我们自己要滚到哪一页」。非空期间**禁止**把落定页往上报。
+    //
+    // 这是「连按翻页只动一格」的根因：连按时前一次动画会被新目标取消，pager 先落定在
+    // 中间那一页，这个中间值一旦上报回去就把上层月份写回旧值，用户的第二次、第三次点击
+    // 白点。（v31 里箭头是「组合时月份 + 1」，我误以为是捕获了旧值；实测慢按三次能到
+    // 三个月后、快按三次只到两个月后，才定位到是这里的动画竞赛。）
+    var pendingPage by remember { mutableStateOf<Int?>(null) }
 
     // 外部改了 month（左右箭头按钮、或点了相邻月份的补位日期）→ 让 pager 跟过去。
     //
@@ -85,7 +106,13 @@ fun CompactCalendar(
     LaunchedEffect(month) {
         val target = pageOfMonth(month).coerceIn(0, MONTH_PAGE_COUNT - 1)
         if (target != pagerState.currentPage) {
-            pagerState.animateScrollToPage(target)
+            pendingPage = target
+            try {
+                pagerState.animateScrollToPage(target)
+            } finally {
+                // 只有「当前目标还是这一页」时才清空；已被更新的目标接管就别动它
+                if (pendingPage == target) pendingPage = null
+            }
         }
     }
 
@@ -98,10 +125,12 @@ fun CompactCalendar(
     // 没有 currentTargetPage。）
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
+            // 我们正主动滚过去、或用户手指还没离开：这时的落定值不代表用户的选择
+            if (pendingPage != null || pagerState.isScrollInProgress) return@collect
             val shown = monthOfPage(page)
             // 只在月份真的变了才上报：snapshotFlow 会先发一次初始值，
             // 外部翻月导致的同一页也不该再发一次（否则又是一条回路）。
-            if (shown != currentMonth) currentOnMonthChange(shown)
+            if (shown != currentMonth) currentOnSwipeMonth(shown)
         }
     }
 
@@ -114,7 +143,7 @@ fun CompactCalendar(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             IconButton(
-                onClick = { onMonthChange(month.minusMonths(1)) },
+                onClick = { onShiftMonth(-1) },
                 modifier = Modifier.testTag(TAG_CALENDAR_PREV_MONTH),
             ) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上个月")
@@ -126,7 +155,7 @@ fun CompactCalendar(
                 modifier = Modifier.testTag(TAG_CALENDAR_MONTH_LABEL),
             )
             IconButton(
-                onClick = { onMonthChange(month.plusMonths(1)) },
+                onClick = { onShiftMonth(1) },
                 modifier = Modifier.testTag(TAG_CALENDAR_NEXT_MONTH),
             ) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下个月")

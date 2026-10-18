@@ -764,7 +764,9 @@ private fun SimpleDatePickerDialog(
                         dayText = picked.dayOfMonth.toString()
                         shownMonth = YearMonth.from(picked)
                     },
-                    onMonthChange = { shownMonth = it },
+                    // 箭头给「位移」、横滑给「绝对月份」：连按箭头时每次都读最新的 shownMonth
+                    onShiftMonth = { delta -> shownMonth = shownMonth.plusMonths(delta.toLong()) },
+                    onSwipeMonth = { shownMonth = it },
                 )
                 Text("手动输入", style = MaterialTheme.typography.labelLarge)
                 Row(

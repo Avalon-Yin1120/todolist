@@ -271,6 +271,39 @@ object NaturalLanguage {
         // 4) 时间
         var time: LocalTime? = null
         var period: String? = null
+
+        // 3.5) 时间区间**先**试：「3 点到 5 点」「下午三点到五点」「15:00-17:00」。
+        //
+        // 必须先于时段词剥离，且两端的时段词各自独立。旧实现先剥掉一个时段词再用它套两端，
+        // 于是「明天早上五点到下午六点」只认出「五点」：剩下的「到下午六点」被塞进名称，
+        // 时长按默认 1 小时算，结束时间还是 6:00 而不是 18:00（用户报的 bug）。
+        var rangeEnd: LocalTime? = null
+        RANGE.find(rest)?.let { m ->
+            val p1 = m.groupValues[1].ifBlank { null }
+            val h1 = cnNumber(m.groupValues[2])
+            val min1 = minuteOf(m.groupValues[3], m.groupValues[4])
+            val p2 = m.groupValues[5].ifBlank { null }
+            val h2 = cnNumber(m.groupValues[6])
+            val min2 = minuteOf(m.groupValues[7], m.groupValues[8])
+            if (h1 != null && h2 != null && h1 in 0..24 && h2 in 0..24) {
+                var s = LocalTime.of(h1.coerceAtMost(23), min1)
+                var e = LocalTime.of(h2.coerceAtMost(23), min2)
+                // 结束端没写时段时沿用起始端（「下午三点到五点」= 15:00–17:00）
+                val endPeriod = p2 ?: p1
+                if (p1 != null) s = applyPeriod(s, p1)
+                if (endPeriod != null) e = applyPeriod(e, endPeriod)
+                // 两端都没写时段时才用「结束早于开始就当作下午」的老规矩（「11点到1点」）。
+                // 写了时段就得照字面来：「晚上十一点到凌晨一点」是跨夜两小时，不能挪成 13:00。
+                if (p1 == null && p2 == null && !e.isAfter(s) && e.hour < 12) {
+                    e = e.plusHours(12)
+                }
+                time = s
+                rangeEnd = e
+                matched += "%d:%02d–%d:%02d".format(s.hour, s.minute, e.hour, e.minute)
+                rest = rest.removeRange(m.range)
+            }
+        }
+
         // 单字时段：「晚九点」「早七点」「夜十一点」。只在后面紧跟「数字+点」时才认，
         // 免得把「晚会」「早餐」这类名字里的字当成时段（用户报过「明天晚九点吃药」被吃成「晚吃药」）。
         SHORT_PERIOD.find(rest)?.let { m ->
@@ -286,29 +319,6 @@ object NaturalLanguage {
             period = m.value
             matched += m.value
             rest = rest.removeRange(m.range)
-        }
-
-        // 3.5) 时间区间「3 点到 5 点」「下午三点到五点」「15:00-17:00」
-        var rangeEnd: LocalTime? = null
-        RANGE.find(rest)?.let { m ->
-            val h1 = cnNumber(m.groupValues[1])
-            val m1 = cnNumber(m.groupValues[2]) ?: 0
-            val h2 = cnNumber(m.groupValues[3])
-            val m2 = cnNumber(m.groupValues[4]) ?: 0
-            if (h1 != null && h2 != null && h1 in 0..24 && h2 in 0..24) {
-                var s = LocalTime.of(h1.coerceAtMost(23), m1.coerceIn(0, 59))
-                var e = LocalTime.of(h2.coerceAtMost(23), m2.coerceIn(0, 59))
-                period?.let { p ->
-                    s = applyPeriod(s, p)
-                    e = applyPeriod(e, p)
-                }
-                // 「下午 11 点到 1 点」这种跨午夜的写法：结束时间早于开始就往前推 12 小时
-                if (!e.isAfter(s) && e.hour < 12) e = e.plusHours(12)
-                time = s
-                rangeEnd = e
-                matched += "%d:%02d–%d:%02d".format(s.hour, s.minute, e.hour, e.minute)
-                rest = rest.removeRange(m.range)
-            }
         }
 
         if (rangeEnd == null) CLOCK_COLON.find(rest)?.let { m ->
@@ -396,7 +406,9 @@ object NaturalLanguage {
             ?: today(now, zone).plusYears(yearDelta.toLong()).plusMonths(monthDelta.toLong())
 
         var clock = time ?: period?.let { PERIOD_DEFAULTS[it] } ?: LocalTime.of(9, 0)
-        if (time != null && period != null) clock = applyPeriod(clock, period!!)
+        // 区间两端的时段已经各自处理过；再拿残留的时段词套一遍会把它弄错
+        // （「下午茶 3 点到 5 点」不该变成 15:00–17:00）。只对非区间句生效。
+        if (rangeEnd == null && time != null && period != null) clock = applyPeriod(clock, period!!)
 
         var startDate = baseDate
         var start = LocalDateTime.of(startDate, clock).atZone(zone).toInstant().toEpochMilli()
@@ -477,8 +489,28 @@ object NaturalLanguage {
     /** 单字时段（早/晚/夜），后面必须紧跟「数字+点/时」才认。 */
     private val SHORT_PERIOD = Regex("([早晚夜])(?=(?:\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时))")
 
-    /** 时间区间：3点到5点 / 下午三点到五点 / 15:00-17:00。 */
-    private val RANGE = Regex("(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)?(?::(\\d{1,2}))?\\s*(?:到|至|~|－|-)\\s*(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)?(?::(\\d{1,2}))?")
+    /** 时段词，与 [PERIOD_DEFAULTS] 的键一一对应。 */
+    private const val PERIOD_WORDS_ALT = "凌晨|早上|早晨|清晨|上午|中午|午休|下午|傍晚|晚上|夜里"
+
+    /** 中文数字（含「两」）或 1~2 位阿拉伯数字。 */
+    private const val NUMBER_ALT = "\\d{1,2}|[一二三四五六七八九十两]+"
+
+    /**
+     * 时间区间：3点到5点 / 下午三点到五点 / 15:00-17:00 / 早上五点到下午六点。
+     *
+     * 两端各自带一个可选时段词（组 1、组 5），所以「早上 X 点到下午 Y 点」能分别解释；
+     * 时刻必须带「点 / 时 / :」分隔符，避免把「五到六个」这类数量词当成时间。
+     *
+     * 组：1 起始时段、2 起始小时、3 起始分钟原文、4 起始分钟数字、
+     *     5 结束时段、6 结束小时、7 结束分钟原文、8 结束分钟数字
+     */
+    private val RANGE = Regex(
+        "(?:($PERIOD_WORDS_ALT)\\s*)?($NUMBER_ALT)\\s*(?:点|时|[:：])\\s*" +
+            "(半|一刻|三刻|(?:($NUMBER_ALT)\\s*分?))?\\s*" +
+            "(?:到|至|~|－|-|—)\\s*" +
+            "(?:($PERIOD_WORDS_ALT)\\s*)?($NUMBER_ALT)\\s*(?:点|时|[:：])\\s*" +
+            "(半|一刻|三刻|(?:($NUMBER_ALT)\\s*分?))?"
+    )
 
     private val CLOCK_COLON = Regex("(\\d{1,2}|[一二三四五六七八九十]+)[:：](\\d{1,2}|[一二三四五六七八九十]+)")
     private val CLOCK_POINT = Regex("(\\d{1,2}|[一二三四五六七八九十两]+)(?:点|时)(半|一刻|三刻|(\\d{1,2}|[一二三四五六七八九十]+)分?)?")
@@ -539,6 +571,14 @@ object NaturalLanguage {
             }
         }
         return total + current
+    }
+
+    /** 区间里的分钟数：「半」30、「一刻」15、「三刻」45、「5 点 30 分」取 30。 */
+    private fun minuteOf(raw: String, num: String): Int = when {
+        raw.contains("半") -> 30
+        raw.contains("一刻") -> 15
+        raw.contains("三刻") -> 45
+        else -> cnNumber(num)?.coerceIn(0, 59) ?: 0
     }
 
     private fun leadOf(m: MatchResult): Int {

@@ -1000,16 +1000,18 @@ private fun PeriodNavigator(
             onClick = onBackToToday,
             modifier = Modifier.testTag(TAG_BACK_TO_TODAY),
         ) { Text(backLabel) }
+        // 顺序：← 回到今天 跳转 → 。「跳转」放在右箭头左边（用户要求换位），
+        // 这样最右边永远是最常用的「下一期」，与左右两侧的箭头对称。
+        TextButton(
+            onClick = { jumpMonth = java.time.YearMonth.from(selectedDate); showJump = true },
+            modifier = Modifier.testTag(TAG_JUMP_DATE),
+        ) { Text("跳转", style = MaterialTheme.typography.labelMedium) }
         IconButton(
             onClick = onNext,
             modifier = Modifier.testTag(TAG_PERIOD_NEXT),
         ) {
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下一个")
         }
-        TextButton(
-            onClick = { jumpMonth = java.time.YearMonth.from(selectedDate); showJump = true },
-            modifier = Modifier.testTag(TAG_JUMP_DATE),
-        ) { Text("跳转", style = MaterialTheme.typography.labelMedium) }
     }
 
     // 日期选择器：只在点击时才组合，平时零开销
@@ -1026,7 +1028,10 @@ private fun PeriodNavigator(
                         showJump = false
                         onJumpTo(it)
                     },
-                    onMonthChange = { jumpMonth = it },
+                    // 箭头用「当前值 + 位移」：连按时每次点击都读到最新的 jumpMonth，
+                    // 不会因为没来得及重组而把两次点击算成同一个月
+                    onShiftMonth = { delta -> jumpMonth = jumpMonth.plusMonths(delta.toLong()) },
+                    onSwipeMonth = { jumpMonth = it },
                 )
             },
             confirmButton = {

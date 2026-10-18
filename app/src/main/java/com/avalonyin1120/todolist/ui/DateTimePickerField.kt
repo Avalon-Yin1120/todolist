@@ -343,7 +343,10 @@ private fun DatePickerDialog(
                         dayText = picked.dayOfMonth.toString()
                         shownMonth = YearMonth.from(picked)
                     },
-                    onMonthChange = { shownMonth = it },
+                    // 同 CompactCalendar 的约定：箭头给「位移」，横滑给「绝对月份」。
+                    // 以前箭头回调的是 month.plusMonths(1)（组合时捕获的月），连按会丢按。
+                    onShiftMonth = { delta -> shownMonth = shownMonth.plusMonths(delta.toLong()) },
+                    onSwipeMonth = { shownMonth = it },
                 )
 
                 Text("手动输入", style = MaterialTheme.typography.labelLarge)

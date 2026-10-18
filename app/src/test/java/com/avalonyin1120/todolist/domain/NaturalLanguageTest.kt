@@ -221,6 +221,37 @@ class NaturalLanguageTest {
     }
 
     @Test
+    fun `区间两端各自带时段`() {
+        // 用户报的 bug：以前只认出「五点」，剩下「到下午六点」被塞进名称，时长还是默认 1 小时
+        val p = parse("明天早上五点到下午六点跑步")!!
+        assertThat(startOf(p)).isEqualTo("2026-10-19 05:00")
+        assertThat(p.durationMinutes).isEqualTo(13 * 60)
+        assertThat(p.name).isEqualTo("跑步")
+        assertThat(p.hasDuration).isTrue()
+    }
+
+    @Test
+    fun `区间结束端省略时段时沿用起始端`() {
+        assertThat(parse("明天下午三点到五点开会")!!.durationMinutes).isEqualTo(120)
+        assertThat(parse("明天上午九点到十一点开会")!!.durationMinutes).isEqualTo(120)
+    }
+
+    @Test
+    fun `写了时段就照字面算 跨夜不硬挪十二小时`() {
+        // 「晚上十一点到凌晨一点」是两小时，不是 23:00–13:00
+        val n = parse("明天晚上十一点到凌晨一点值班")!!
+        assertThat(startOf(n)).isEqualTo("2026-10-19 23:00")
+        assertThat(n.durationMinutes).isEqualTo(120)
+    }
+
+    @Test
+    fun `两点都没写时段时才当下午`() {
+        assertThat(parse("明天十一点到一点开会")!!.durationMinutes).isEqualTo(120)
+        assertThat(parse("明天9点到10点半开会")!!.durationMinutes).isEqualTo(90)
+        assertThat(parse("明天下午两点半到四点开会")!!.durationMinutes).isEqualTo(90)
+    }
+
+    @Test
     fun `只认出部分时不影响已填内容`() {
         // 模拟「两次输入叠加」：先只说重复，再只说时间
         val step1 = parse("每周六")
