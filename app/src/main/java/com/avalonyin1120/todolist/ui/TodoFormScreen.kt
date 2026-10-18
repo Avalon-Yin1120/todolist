@@ -175,22 +175,6 @@ fun TodoFormContent(
         }
 
         // ---------------------------------------------------------------- 名称
-        FormCard {
-            OutlinedTextField(
-                value = state.name,
-                onValueChange = form::setName,
-                label = { Text("名称") },
-                placeholder = { Text("例如：小组会议") },
-                singleLine = true,
-                isError = errors.containsKey(FormValidator.FIELD_NAME),
-                supportingText = {
-                    errors[FormValidator.FIELD_NAME]?.let { Text(messageOf(it)) }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag(TAG_NAME_FIELD),
-            )
-        }
 
         // ---------------------------------------------------------------- 重复
         // 紧随名称：这是本屏最主要的选择，选完它下面才知道还能改什么。
