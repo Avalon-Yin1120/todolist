@@ -26,24 +26,26 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        // **预览版与已装的正式版共存**：用户机上还装着 `1.0.0`（versionCode 1），
-        // 想同时装预览版就必须换 applicationId —— Android 用包名标识应用，
-        // 同包名的包会互相覆盖（签名相同也一样覆盖）。
-        // 注意：`namespace` 与代码里的包名**仍是** com.avalonyin1120.todolist，
-        // 只有安装标识带 `.preview`；action 字符串、R 类、数据库名都不变。
-        // ⚠️ 发布正式版时把这一行改回 `com.avalonyin1120.todolist`。
-        applicationId = "com.avalonyin1120.todolist.preview"
+        // **2.0.0 起是正式版，包名回到 com.avalonyin1120.todolist**。
+        //
+        // 这是「保留 1.0.0 数据」的关键：Android 用包名标识应用，数据目录
+        // `/data/data/<包名>/`、SharedPreferences、Room 数据库都跟着包名走。
+        // 只要包名不变、签名不变、versionCode 更大，装上去就是**原地升级**，
+        // 1.0.0 建的待办与设置原样还在（v2.0.0 的 Room schema 仍是第 5 版，无需迁移）。
+        //
+        // 预览阶段那个带 `.preview` 后缀的包是**另一个应用**，与正式版互不影响；
+        // 它用完了可以单独卸载，卸载不会碰到正式版的数据。
+        applicationId = "com.avalonyin1120.todolist"
         minSdk = 26
         targetSdk = 35
-        // **预览版**：应用改为 GitHub 开源 + GitHub Release 分发，不再走应用商店。
-        // 版本号带 preview → 「设置 → 版本号」显示「预览构建」（见 VersionInfo.buildTypeLabel），
-        // 用来提醒下载的人这是开发中的包。
+        // 正式版版本号：**不带 preview** → 「设置 → 版本号」显示「正式构建」
+        //（见 VersionInfo.buildTypeLabel）。
         //
-        // versionCode 升到 4：这一版加了「个性化」「一句话新建」「事件日志」三块新功能，
-        // 且 applicationId 加了 .preview 后缀（与已装的 1.0.0 共存）。
-        // 纪律：每次发版 versionCode 必须 +1；versionName 只给人看。
-        versionCode = 12
-        versionName = "1.2.0-preview5"
+        // versionCode 的纪律：Android 只比较它的大小，所以正式版这条线必须**大于**
+        // 上一个正式版（1.0.0 = 1）。预览版那条线（3..12）是另一个 applicationId，
+        // 与这里的数字互不干扰。
+        versionCode = 2
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

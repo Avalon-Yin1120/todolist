@@ -3,9 +3,8 @@
 Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止时间 / 提前提醒量），
 按时间顺序展示，到点提醒。支持**周期待办**、**三种提醒方式**、**日/周/月三种日历视图**。
 
-- 包名 `com.avalonyin1120.todolist`（**预览阶段临时加 `.preview` 后缀**，好让测试包与已装的
-  `1.0.0` 正式版共存；发正式版时改回来）｜版本 `1.2.0-preview5`（**预览版**；版本号带 preview，
-  「设置 → 版本号」会显示「预览构建」）
+- 包名 `com.avalonyin1120.todolist`｜版本 `2.0.0`（**正式版**；「设置 → 版本号」显示「正式构建」与
+`数据库版本 v5`。从 `1.0.0` 原地升级，**包名与签名都不变，已有的待办与设置原样保留**）
 - **默认用通知式提醒**（安静、不需要特殊权限、通知上就能直接完成）；想要到点响铃 + 亮屏 + 全屏提醒页，
   在设置的「新建待办时默认选择」里改成「闹钟式」（也可以改成「不通知」），或在单条待办上单独选
 - **不联网**：没有 `INTERNET` 权限，数据只存在本机；开源协议 **GPLv3**，见 [LICENSE](LICENSE)
@@ -668,8 +667,8 @@ $adb='D:\Android\sdk\platform-tools\adb.exe'; $pkg='com.avalonyin1120.todolist'
 - **「迟到启动」的抑制按「待办 + 这次闹钟的身份」判定**：身份取待办的 `updatedAt`，
   所以「关掉闹钟 → 编辑提醒时间 → 到点」**照响**（用户真机上遇到过被这段窗口吞掉的情况），
   而没有编辑过的迟到投递仍然被挡掉。
-- **版本号里带 `preview` 时，版本页显示「预览构建」**：目前不发布正式版，
-  装 release 包的人是在帮忙试用，把预览包说成「正式构建」会误导对问题的判断。
+- **版本号里带 `preview` 时，版本页显示「预览构建」**；正式版（如 `2.0.0`）显示「正式构建」。
+  两者靠 `BuildConfig.VERSION_NAME` 判断，改 gradle 即可，界面不写死。
 - **数据库当前 v5，已移除 `fallbackToDestructiveMigration`**：从 1.0.0 起用户数据就是真实资产，
   **任何 schema 变更都必须配一条 `Migration`**（忘写会在升级时直接抛异常，开发期立刻暴露，
   而不是悄悄清空用户数据）。本版本把包名从 `com.example.todolist` 改成了
@@ -822,7 +821,7 @@ adb shell setprop debug.todo.anim_ms 0
 ## 10. 授权、分发与发版
 
 > **本项目不上架应用商店**：以开源方式发布，构建好的 APK 通过 **GitHub Release** 分发。
-> 版本号保持 `-previewN` 后缀，应用内版本页显示「预览构建」，提醒下载的人这是开发中的包。
+> 正式版版本号不带后缀（`2.0.0`）；开发期预览包用 `-previewN`，应用内会显示「预览构建」。
 
 ### 10.1 授权
 
@@ -841,7 +840,7 @@ adb shell setprop debug.todo.anim_ms 0
 ### 10.2 发布一个版本（GitHub Release）
 
 1. **改版本号**：`versionCode` **必须比上一版 +1**（系统与安装器据此判断新旧），
-   `versionName` 只给人看，预览版带 `-previewN`。
+   `versionName` 只给人看；正式版不带后缀，预览版带 `-previewN`。
 2. **构建**：见 §3.2，产物 `app/build/outputs/apk/release/app-release.apk`。
 3. **校验**（两条都不能省）：
    ```powershell
@@ -872,8 +871,8 @@ adb shell setprop debug.todo.anim_ms 0
 
 | 项 | 状态 | 说明 / 证据 |
 |---|---|---|
-| 包名 | ✅ | `com.avalonyin1120.todolist`（预览包为 `…​.preview`，与已装正式版共存）；改名等于换应用 |
-| 版本号 | ✅ | 当前 `versionCode = 12`、`versionName = "1.2.0-preview5"`；`aapt2 dump badging` 实测与产物一致 |
+| 包名 | ✅ | `com.avalonyin1120.todolist`（与 `1.0.0` 完全一致 ⇒ 原地升级，数据不丢）；改名等于换应用 |
+| 版本号 | ✅ | 当前 `versionCode = 2`、`versionName = "2.0.0"`（比 `1.0.0` 的 1 大）；`aapt2 dump badging` 实测与产物一致 |
 | release 签名 | ✅ | `apksigner verify` 实测 v2 + v3 已签名，DN `CN=Avalon-Yin1120`；keystore 与口令**不在版本库**里，务必离线备份两处以上 |
 | R8 + 资源压缩 | ✅ | release 包 **1.4 MB** 量级（debug 约 16.5 MB）；`app/proguard-rules.pro` 逐条写了为什么需要那条规则 |
 | 单元测试 | ✅ | **392 条 / 23 个类**全绿（`:app:testDebugUnitTest`，Robolectric，无需设备） |
@@ -895,5 +894,27 @@ adb shell setprop debug.todo.anim_ms 0
 ### 10.5 每次发版的固定流程
 
 改代码 → `versionCode + 1`、必要时改 `versionName` → `:app:testDebugUnitTest` →
-`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（如 `v1.2.0-preview5`）→
+`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（如 `v2.0.0`）→
 GitHub Release 上传 APK + SHA-256 + 说明。
+
+### 10.6 从 `1.0.0` 原地升级（`2.0.0` 起）
+
+`2.0.0` 是**正式版**，`applicationId` 与 `1.0.0` 完全一致（`com.avalonyin1120.todolist`），
+用同一把 release 密钥签名，`versionCode` 从 `1` 提到 `2`。三者任一不满足就不是升级，而是另一条线：
+
+| 条件 | 本版的取值 | 不满足会怎样 |
+|---|---|---|
+| 包名不变 | `com.avalonyin1120.todolist` | 装成第二个应用，数据目录不同 ⇒ 旧数据看不到 |
+| 签名不变 | 证书 SHA-256 `3226b61f…b333a6` | `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，必须先卸载（数据全丢） |
+| `versionCode` 更大 | `2 > 1` | `INSTALL_FAILED_VERSION_DOWNGRADE` |
+| Room schema 兼容 | 仍是第 5 版，`MIGRATIONS` 为空 | 打不开库；本版没动表结构，所以不需要迁移 |
+
+数据怎么跟着走：待办在 `databases/todolist.db`（Room）、设置在 `shared_prefs/`，
+两者都在 `/data/data/<包名>/` 下，包名不变就原地不动。已排好的提醒也不必重设：
+应用启动时 `SchedulingCoordinator` 会按库里的数据重排一次。
+
+**实测（API 35 模拟器，`install -r`，全程没卸载）**：装 `1.0.0` → 建一条待办 →
+装 `2.0.0` → 版本号 `2.0.0（2）`、构建类型「正式构建」、数据库 `v5`、待办仍在、`crash` 缓冲为空。
+
+预览阶段那个带 `.preview` 后缀的包是**另一个应用**，与正式版互不影响；
+升级到 `2.0.0` 之后它就没用了，可以单独卸载，卸载不会碰到正式版的数据。
