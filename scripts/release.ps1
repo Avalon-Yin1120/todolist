@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     本机构建、校验并（可选）发布「待办提醒」的 release 包到 GitHub Release。
 
@@ -161,7 +161,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 $notesFile = "docs/release-notes/$Tag.md"
-$ghArgs = @('release','create',$Tag,"$outApk","$sumFile",'--title',"待办提醒 $ver",'--target',$head)
+$ghArgs = @('release','create',$Tag,"$outApk","$sumFile",'--title',"待办提醒 $ver")
 if (Test-Path $notesFile) { $ghArgs += @('--notes-file',$notesFile) } else { $ghArgs += '--generate-notes' }
 & gh @ghArgs
 if ($LASTEXITCODE -ne 0) { Die 'gh release create 失败。' }

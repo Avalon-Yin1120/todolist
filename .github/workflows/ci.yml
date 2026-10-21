@@ -32,6 +32,9 @@ jobs:
       - name: 安装 Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: 安装 SDK 组件（platform 35 / build-tools 35）
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+
       - name: 缓存 Gradle
         uses: gradle/actions/setup-gradle@v4
 
