@@ -1,7 +1,10 @@
 name: CI
 
 # 只做「代码还能不能编译、单测还过不过」这件事。
-# 不签名、不发版：发布走 `release.yml`（手动触发）或本地 `scripts/release.ps1`。
+# 不签名、不发版：发布走 release.yml（手动触发）或本地 scripts/release.ps1。
+#
+# 失败时先看「Diagnostics（失败时先看这里）」这一步的输出：
+# 它把 JDK / SDK / gradlew 权限 / Gradle 版本先打出来，真正的原因通常就在紧接着的那一步。
 on:
   push:
     branches: [ main ]
@@ -15,11 +18,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 与本机一致，避免日期格式化类断言在不同时区下漂移
+  TZ: Asia/Shanghai
+
 jobs:
   test:
     name: 单测 + 编译
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -32,24 +43,45 @@ jobs:
       - name: 安装 Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 安装 SDK 组件（platform 35 / build-tools 35）
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+      - name: 接受许可并安装 SDK 组件（platform 35 / build-tools 35）
+        run: |
+          set -x
+          yes 2>/dev/null | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: gradlew 可执行位兜底
+        run: |
+          chmod +x gradlew
+          ls -l gradlew
 
       - name: 缓存 Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Diagnostics（失败时先看这里）
+        run: |
+          echo "== 环境 =="
+          java -version 2>&1
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "TZ=$TZ"
+          date
+          echo "== Gradle =="
+          ./gradlew --version 2>&1 | head -20
+
       - name: 单元测试
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
 
       - name: 编译调试包（不签名发布）
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: 上传测试报告
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: app/build/reports/tests/testDebugUnitTest/
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore
 
       - name: 上传调试包（仅供排查，不是发布件）

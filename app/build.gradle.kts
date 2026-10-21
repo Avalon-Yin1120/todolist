@@ -124,8 +124,21 @@ android {
                 // Robolectric 默认会挑它能支持的最高 SDK；显式钉在 35，
                 // 与 compileSdk / targetSdk 一致，避免上游发布新 API 后测试行为漂移。
                 it.systemProperty("robolectric.enabledSdks", "35")
+
+                // **钉死测试机的时区与语言**。
+                //
+                // 生产代码里有 `ZoneId.systemDefault()`（表单默认时间、提醒文案等），
+                // 测试机时区一变，同一句断言就会差 8 小时：本机是 Asia/Shanghai，
+                // GitHub Actions 的 runner 默认是 UTC，于是「本地全绿、CI 全红」。
+                // 想复现 CI 的问题可以设环境变量 TEST_TZ=UTC 再跑一次。
+                val testTz = System.getenv("TEST_TZ") ?: "Asia/Shanghai"
+                it.systemProperty("user.timezone", testTz)
+                it.systemProperty("user.language", "zh")
+                it.systemProperty("user.country", "CN")
+
                 it.jvmArgs(
                     "-Dfile.encoding=UTF-8",
+                    "-Duser.timezone=$testTz",
                     // Robolectric 每个测试类都要建一次 Android 沙箱，堆给小了会频繁 GC，
                     // 表现为整批测试卡在某个类之后长时间没有输出。
                     "-Xmx2048m",
