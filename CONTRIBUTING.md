@@ -61,3 +61,20 @@ adb shell am start -n com.avalonyin1120.todolist/com.avalonyin1120.todolist.Main
 
 提交代码即表示同意以 **GPLv3** 发布（见 [LICENSE](LICENSE)）。
 本项目不要求 CLA，也不会把你的贡献放进闭源版本。
+
+## 六、Windows 脚本的编码约定
+
+`scripts/*.ps1` 里有中文，而 Windows PowerShell 5.1 **在没有 BOM 时按 ANSI(GBK) 解码**：
+中文会变成乱码，严重时连引号都会被解错、脚本直接语法报错。
+
+所以：**新增或修改 `.ps1` 时请存成「UTF-8 with BOM」**（VS Code 右下角可切换）。
+可以这样自查：
+
+```powershell
+$b = [IO.File]::ReadAllBytes('scripts\release.ps1')
+"BOM: $($b[0]) $($b[1]) $($b[2])"   # 应该是 239 187 191
+[System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts\release.ps1'), [ref]$null, [ref]$e)
+$e.Count                              # 应该是 0
+```
+
+`.yml` / `.md` / `.kt` 一律 UTF-8 **无 BOM**（GitHub Actions 与 Gradle 都不喜欢 BOM）。

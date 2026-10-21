@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     本机构建、校验并（可选）发布「待办提醒」的 release 包到 GitHub Release。
 
