@@ -1,0 +1,91 @@
+name: Bug 报告
+description: 到点不响、时间算错、界面错乱等具体问题
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢反馈。**这个应用完全离线**，所以请尽量把「手机上的现象」描述清楚——
+        我拿不到你的日志，只能靠这些信息复现。
+
+        发送前请确认：你装的是 **release 包**（不是自己编译的 debug 包），
+        并且已经看过 [README 的「已知限制」](../../README.md#6-行为约定与已知限制)。
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本号
+      description: 应用内「设置 → 版本号」那一行，点开还能看到构建类型与数据库版本
+      placeholder: "2.0.0（2）· 正式构建 · 数据库 v5"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 手机型号与系统版本
+      placeholder: "OPPO Find X8 / ColorOS 15（Android 15）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 这条待办的提醒方式
+      options:
+        - 通知
+        - 闹钟式
+        - 不通知
+        - 不涉及提醒（界面/数据问题）
+    validations:
+      required: true
+
+  - type: textarea
+    id: todo
+    attributes:
+      label: 出问题的那条待办是怎么设置的
+      description: 起止时间、提前量、是否周期（周期规则）、有没有「仅修改本次」
+      placeholder: "10-21 14:00 → 15:30，提前 15 分钟，通知方式，不是周期"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 新建待办「开会」，设 14:00，提前 15 分钟
+        2. 把应用退到后台，锁屏
+        3. 等到 13:45——没有通知
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望 vs 实际
+      placeholder: "期望 13:45 弹通知；实际 13:47 才弹，而且没有声音"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 事件日志（可选，但很有用）
+      description: |
+        「设置 → 事件日志」→ 点「导出（名称脱敏）」→ 粘贴到下面。
+        导出时待办名会被替换成 `〈待办#3：5 字〉`，不会泄露你的内容。
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 自查
+      options:
+        - label: 我已经在「设置 → 提醒可靠性检查」里过了那几项
+          required: false
+        - label: 我的手机没有把本应用「强行停止」过（强行停止后广播不会投递）
+          required: false

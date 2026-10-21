@@ -1,19 +1,59 @@
 # 待办提醒（Todolist）
 
-Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止时间 / 提前提醒量），
-按时间顺序展示，到点提醒。支持**周期待办**、**三种提醒方式**、**日/周/月三种日历视图**。
+一个**不联网**的 Android 待办提醒：起止时间 + 提前提醒量，日 / 周 / 月三种日历视图，
+周期待办可按场次完成，到点用「通知」或「闹钟式」提醒。
+
+[下载最新版](#下载与安装) · [更新记录](CHANGELOG.md) · [隐私政策](PRIVACY.md) · [参与开发](CONTRIBUTING.md) · [License: GPLv3](LICENSE)
+
+> **不联网是硬约束**：发布版清单里没有 `INTERNET` 权限，Android 在内核层拒绝本进程建立网络连接；
+> 待办、设置、事件日志只存在你手机的私有目录里。没有账号、没有广告、没有统计或崩溃上报 SDK。
+
+## 下载与安装
+
+| | |
+|---|---|
+| 最新正式版 | [Releases → 最新版](https://github.com/Avalon-Yin1120/todolist/releases/latest) |
+| 文件名 | `todolist-<版本>.apk`（约 1.4 MB，release 签名） |
+| 系统要求 | Android 8.0（API 26）及以上 |
+| 完整性校验 | 同页 `SHA256SUMS.txt`；签名证书 SHA-256 `3226b61f6503d52b0c5b9ef1b50e88e3952190a783674f61caf3027465b333a6` |
+
+安装：下载 APK 后直接点开安装，系统提示「未知来源」是正常的（本应用不经应用商店分发）。
+**从 `1.0.0` 升级请直接覆盖安装，不要先卸载**——数据在应用私有目录里，卸载即清除；
+四个必要条件（包名 / 签名 / versionCode / 数据库版本）见 [§10.6](#106-从-100-原地升级200-起)。
+
+校验签名（可选，防止中间人换包）：
+
+```bash
+apksigner verify --print-certs todolist-2.0.0.apk
+# SHA-256 digest 应为 3226b61f...b333a6
+shasum -a 256 todolist-2.0.0.apk   # 与 SHA256SUMS.txt 对照
+```
+
+## 截图
+
+| 待办列表 | 周视图（时间轴） | 月视图（角标 + 忙碌横条） |
+|---|---|---|
+| ![待办列表](docs/screenshots/list.png) | ![周视图](docs/screenshots/week.png) | ![月视图](docs/screenshots/month.png) |
+
+| 个性化 · 颜色 | 个性化 · 快捷按钮 |
+|---|---|
+| ![个性化-颜色](docs/screenshots/personalization-colors.png) | ![个性化-快捷按钮](docs/screenshots/personalization-leads.png) |
+
+## 其他信息
 
 - 包名 `com.avalonyin1120.todolist`｜版本 `2.0.0`（**正式版**；「设置 → 版本号」显示「正式构建」与
-`数据库版本 v5`。从 `1.0.0` 原地升级，**包名与签名都不变，已有的待办与设置原样保留**）
+  `数据库版本 v5`。从 `1.0.0` 原地升级，**包名与签名都不变，已有的待办与设置原样保留**）
 - **默认用通知式提醒**（安静、不需要特殊权限、通知上就能直接完成）；想要到点响铃 + 亮屏 + 全屏提醒页，
   在设置的「新建待办时默认选择」里改成「闹钟式」（也可以改成「不通知」），或在单条待办上单独选
-- **不联网**：没有 `INTERNET` 权限，数据只存在本机；开源协议 **GPLv3**，见 [LICENSE](LICENSE)
+- 开源协议 **GPLv3**，见 [LICENSE](LICENSE)；第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 完全离线说明见 [PRIVACY.md](PRIVACY.md)（[English summary](PRIVACY.en.md)）
 
 > ⚠️ **免责声明**
 > 本应用依赖 Android 的闹钟与通知机制，**系统的省电策略、厂商的后台限制、「强行停止」后的广播限制
 > 都可能让提醒不响或晚响**。它**不适合**用于医疗用药、交通运输、工业控制等一旦漏提醒就会造成
 > 人身伤害或重大损失的场景。软件按「现状」提供，作者不对漏提醒造成的损失负责
-> （Apache-2.0 第 7、8 条）。首次使用请先看「设置 → 提醒可靠性检查」。
+> （GPLv3 第 15、16 条）。首次使用请先看「设置 → 提醒可靠性检查」。
+
 
 
 ## 功能一览
@@ -43,7 +83,7 @@ Android 原生待办事项 App：添加待办（名称 / 起始时间 / 终止�
 并在界面顶部横幅 + Snackbar 告知用户；**「到点不响」时第一个该看的就是「提醒可靠性检查」页**。
 
 > 真机提醒为什么可能不响（重要）：见 [§5 提醒的可靠性](#5-提醒的可靠性为什么到点不响)。
-> 正式发布前还差哪些事：见 [§10 发布清单](#10-发布清单v100)。
+> 发版流程与升级条件：见 [§10 授权、分发与发版](#10-授权分发与发版)。
 
 ---
 
@@ -839,20 +879,45 @@ adb shell setprop debug.todo.anim_ms 0
 
 ### 10.2 发布一个版本（GitHub Release）
 
-1. **改版本号**：`versionCode` **必须比上一版 +1**（系统与安装器据此判断新旧），
-   `versionName` 只给人看；正式版不带后缀，预览版带 `-previewN`。
-2. **构建**：见 §3.2，产物 `app/build/outputs/apk/release/app-release.apk`。
-3. **校验**（两条都不能省）：
-   ```powershell
-   $bt = "$env:ANDROID_HOME\build-tools\35.0.0"
-   & "$bt\aapt2.exe" dump badging app\build\outputs\apk\release\app-release.apk | Select-String 'package:|sdkVersion'
-   & "$bt\apksigner.bat" verify --print-certs app\build\outputs\apk\release\app-release.apk
-   ```
-   第二条**不能**出现 `CN=Android Debug`；第一条的 `versionCode` 必须比上一版大。
-4. **上传**：GitHub Release 里附上 APK、SHA-256 校验值、更新说明，
-   并链接 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`（Apache-2.0 要求随分发提供许可证副本）。
-5. **签名永远是同一套 keystore**（`release/` 目录，已在 `.gitignore` 里排除）。
-   换签名会导致老用户装不上新版本（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`）。
+日常发版**用脚本**，它把下面所有步骤串起来并逐条断言（有任何一条不对就停下）：
+
+```powershell
+# 只出包 + 校验（不碰远端），产物在 dist\
+pwsh -File scripts\release.ps1
+
+# 校验通过后推 tag 并创建 Release（需要已登录的 gh CLI）
+pwsh -File scripts\release.ps1 -Publish
+```
+
+脚本做的事：
+
+1. 工作区必须干净（发版必须对应一个确定的提交）、确认 `release/keystore.properties` 存在且**没进版本库**；
+2. `:app:testDebugUnitTest` 全绿；
+3. `:app:assembleRelease`；
+4. **三条校验**：包名必须是 `com.avalonyin1120.todolist`（不是 `.preview`）、签名不能是 `CN=Android Debug`、
+   权限里**不能出现 `INTERNET`**；
+5. 复制成 `dist\todolist-<versionName>.apk` + `dist\SHA256SUMS.txt`；
+6. `-Publish` 时：打 annotated tag `v<versionName>` → push main 与 tag →
+   `gh release create`，附件是 APK 与 `SHA256SUMS.txt`，说明取自 `docs/release-notes/v<版本>.md`。
+
+手工发版等价于：
+
+```powershell
+$bt = "$env:ANDROID_HOME\build-tools\35.0.0"
+& "$bt\aapt2.exe" dump badging app\build\outputs\apk\release\app-release.apk | Select-String 'package:|sdkVersion'
+& "$bt\apksigner.bat" verify --print-certs app\build\outputs\apk\release\app-release.apk
+git tag -a v2.0.0 -m "待办提醒 2.0.0"; git push origin main v2.0.0
+gh release create v2.0.0 todolist-2.0.0.apk SHA256SUMS.txt --title "待办提醒 2.0.0" --notes-file docs\release-notes\v2.0.0.md
+```
+
+> 想让 CI 出包，用 `.github/workflows/release.yml`（手动触发）。它需要四个 Secrets：
+> `KEYSTORE_BASE64` / `KEYSTORE_STORE_PASSWORD` / `KEYSTORE_KEY_ALIAS` / `KEYSTORE_KEY_PASSWORD`。
+> 缺任何一个，Preflight 会直接失败——**绝不会产出一个假签名的包**。
+> 签名材料只在 runner 的临时目录里存在，构建后立刻删除，不会成为 artifact。
+
+红线：**签名永远是同一套 keystore**（`release/` 目录，已在 `.gitignore` 里排除）。
+换签名会导致老用户装不上新版本（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），数据只能靠卸载重来。
+
 
 ### 10.3 签名指纹（供下载者校验）
 
@@ -893,9 +958,17 @@ adb shell setprop debug.todo.anim_ms 0
 
 ### 10.5 每次发版的固定流程
 
-改代码 → `versionCode + 1`、必要时改 `versionName` → `:app:testDebugUnitTest` →
-`assembleRelease` → 上面 §10.2 的两条校验 → 打 tag（如 `v2.0.0`）→
-GitHub Release 上传 APK + SHA-256 + 说明。
+1. 改代码，`versionCode + 1`（正式版这条线只增不减），`versionName` 按语义化版本改；
+2. 写 `docs/release-notes/v<版本>.md` 与 `CHANGELOG.md` 的条目；
+3. 跑 `pwsh -File scripts\release.ps1` —— 它会跑测试、出包、做三条校验、生成 `dist\` 与 `SHA256SUMS.txt`；
+4. 看一遍 `dist\` 里的包名 / 版本 / 签名输出，确认无误；
+5. `pwsh -File scripts\release.ps1 -Publish` —— 打 tag、push、建 Release 并上传附件；
+6. 到 GitHub Release 页面点开，核对附件名与 `SHA256SUMS.txt` 内容；
+7. 把 `versionCode` 与产物记录进发版台账（本地维护，不入库）。
+
+> 发布三个「必须有」：**APK + SHA256SUMS.txt + 更新说明**。
+> 说明里要写清「怎么装」「能不能从上一版升级」「已知问题」——`docs/release-notes/v2.0.0.md` 是模板。
+
 
 ### 10.6 从 `1.0.0` 原地升级（`2.0.0` 起）
 

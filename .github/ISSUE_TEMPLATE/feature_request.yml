@@ -1,0 +1,45 @@
+name: 功能建议
+description: 想要的新功能、或现有行为的改进
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先说一句：这个项目的边界是**不联网、不做账号、不做云同步、不接第三方 SDK**，
+        这类建议会被直接关掉，不代表否定你。除此之外都欢迎提。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的是什么麻烦
+      description: 先讲场景，别急着讲方案——场景能用一句话说清，方案往往有好几种
+      placeholder: "每周三的例会经常改到周四，现在只能删掉重建，之前的记录就没了"
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望怎么解决
+      placeholder: "希望周期待办能单独把某一周往后挪一天"
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你现在是怎么绕过去的
+      placeholder: "现在是删掉每周三那条，再新建一条每周四的"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: 请确认
+      options:
+        - label: 这个功能不需要联网（本应用没有 INTERNET 权限，也不打算加）
+          required: true
+        - label: 我理解项目不一定有时间实现
+          required: true

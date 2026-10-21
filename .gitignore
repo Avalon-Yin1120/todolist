@@ -27,3 +27,6 @@
 # 本地评估工具（许可证扫描之类）装在 build/ 下，一并忽略
 /build/venv-scancode/
 /build/pylibs*/
+
+# 本地出包产物（Release 附件从仓库外上传，不入库）
+/dist/

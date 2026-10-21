@@ -1,0 +1,156 @@
+name: Release
+
+# 手动触发：用仓库 Secrets 里的**正式签名密钥**出包，并把 APK 传到 GitHub Release。
+#
+# 为什么不接受 tag push 自动触发：没配 Secrets 时每个 tag 都会红一次，
+# 而「签名密钥放没放」是仓库管理员的一次性决定，不该让每次发版都撞墙。
+#
+# 需要的 Secrets（Settings → Secrets and variables → Actions）：
+#   KEYSTORE_BASE64     release.jks 的 base64（见 README「发版」一节怎么生成）
+#   KEYSTORE_STORE_PASSWORD
+#   KEYSTORE_KEY_ALIAS
+#   KEYSTORE_KEY_PASSWORD
+# 缺任何一个，下面的 Preflight 会直接失败并打印提示，不会产出「假签名」的包。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（例如 v2.0.0，需已存在于仓库）'
+        required: true
+      prerelease:
+        description: '标成预发布（Pre-release）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # 创建 Release 需要
+
+jobs:
+  release:
+    name: 出包并发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Preflight —— 检查签名 Secrets
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+          P1: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          A: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          P2: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -z "$KS" ] && missing="$missing KEYSTORE_BASE64"
+          [ -z "$P1" ] && missing="$missing KEYSTORE_STORE_PASSWORD"
+          [ -z "$A" ]  && missing="$missing KEYSTORE_KEY_ALIAS"
+          [ -z "$P2" ] && missing="$missing KEYSTORE_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少 Secrets:$missing —— 请按 README「发版」一节的说明配置，或改用本地 scripts/release.ps1 出包。"
+            exit 1
+          fi
+          echo "签名 Secrets 齐全 ✓"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验 tag 与代码一致
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git fetch --tags --force
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::tag $TAG 不存在，请先在本地打 tag 并 push。"
+            exit 1
+          fi
+          echo "tag $TAG → $(git rev-list -n1 "$TAG")"
+          echo "HEAD  → $(git rev-parse HEAD)"
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 缓存 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 写入签名材料（只在 runner 临时目录，用完即删）
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > release/upload.jks
+          cat > release/keystore.properties <<EOF
+          storeFile=release/upload.jks
+          storePassword=${STORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+          echo "keystore 字节数：$(stat -c%s release/upload.jks)"
+
+      - name: 单元测试
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: 打 release 包
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: 校验产物（包名 / 版本 / 签名 / 无 INTERNET）
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "== badging =="
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -E "^package:|application-label:"
+          echo "== 签名 =="
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | grep -E "DN:|SHA-256 digest" || true
+          if "$BUILD_TOOLS/aapt2" dump permissions "$APK" | grep -q INTERNET; then
+            echo "::error::APK 里出现了 INTERNET 权限，拒绝发布。"
+            exit 1
+          fi
+          VERSION=$("$BUILD_TOOLS/aapt2" dump badging "$APK" | head -1 | grep -oP "versionName='\K[^']+")
+          echo "versionName=$VERSION"
+          # 发出去的包名固定、版本号必须与 tag 对应，防止把旧包传上去
+          case "$TAG" in
+            v"$VERSION") echo "tag 与 versionName 一致 ✓" ;;
+            *) echo "::error::tag $TAG 与包内 versionName $VERSION 不一致，拒绝发布。"; exit 1 ;;
+          esac
+          cp "$APK" "todolist-$VERSION.apk"
+          sha256sum "todolist-$VERSION.apk" | tee SHA256SUMS.txt
+
+      - name: 删掉签名材料
+        if: always()
+        run: rm -rf release
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES_FILE="docs/release-notes/$TAG.md"
+          if [ -f "$NOTES_FILE" ]; then NOTES_ARGS=(--notes-file "$NOTES_FILE"); else NOTES_ARGS=(--generate-notes); fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在 → 只补传附件"
+            gh release upload "$TAG" "todolist-$VERSION.apk" SHA256SUMS.txt --clobber
+          elif [ "$PRERELEASE" = "true" ]; then
+            gh release create "$TAG" "todolist-$VERSION.apk" SHA256SUMS.txt \
+              --title "待办提醒 $VERSION" --target "$(git rev-parse HEAD)" \
+              "${NOTES_ARGS[@]}" --prerelease
+          else
+            gh release create "$TAG" "todolist-$VERSION.apk" SHA256SUMS.txt \
+              --title "待办提醒 $VERSION" --target "$(git rev-parse HEAD)" \
+              "${NOTES_ARGS[@]}"
+          fi
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[].name)'

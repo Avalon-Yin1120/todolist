@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 我是来提问 / 不会用
+    url: https://github.com/Avalon-Yin1120/todolist/discussions
+    about: 用法、装机、厂商设置这类问题请发 Discussions，issue 留给能复现的缺陷。
+  - name: 安全漏洞
+    url: https://github.com/Avalon-Yin1120/todolist/security/advisories/new
+    about: 请不要公开 issue。走私密报告，详见 SECURITY.md。
+  - name: 下载与安装
+    url: https://github.com/Avalon-Yin1120/todolist/releases/latest
+    about: 最新版只在 Release 里发；下载后请核对 SHA256SUMS.txt。
