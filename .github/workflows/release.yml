@@ -54,6 +54,8 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
+          # **要出的是 tag 那个提交的包**，不是 main 的最新代码
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
 
       - name: 校验 tag 与代码一致
@@ -74,14 +76,34 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 接受许可并安装 SDK 组件（platform 35 / build-tools 35）
+      # 不再用 android-actions/setup-android：它在 runner 上会直接失败（2026-10-21 实测，10 秒红）。
+      # runner 自带的镜像上已经装好 Android SDK，这里只用它自带的 sdkmanager 补装组件。
+      - name: 准备 Android SDK（platform 35 / build-tools 35）
         run: |
-          set -x
-          yes 2>/dev/null | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          set -eux
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "SDK 目录："; ls "$SDK_ROOT" || true
+
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager 2>/dev/null | head -1 || true)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "== 预装 SDK 里没有 sdkmanager，下载 commandline-tools =="
+            curl -fsSL -o /tmp/tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            mkdir -p /tmp/cmdline-tools
+            unzip -q /tmp/tools.zip -d /tmp/cmdline-tools
+            SDKMANAGER=/tmp/cmdline-tools/cmdline-tools/bin/sdkmanager
+          fi
+          echo "SDKMANAGER=$SDKMANAGER"
+
+          yes 2>/dev/null | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          ls "$SDK_ROOT/platforms" "$SDK_ROOT/build-tools"
 
       - name: gradlew 可执行位兜底
         run: |
