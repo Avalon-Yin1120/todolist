@@ -19,11 +19,11 @@
     跳过单元测试（不建议；只在急着复现某个打包问题时用）。
 
 .EXAMPLE
-    pwsh -File scripts\release.ps1
+    powershell -ExecutionPolicy Bypass -File scripts\release.ps1
         # 只出包 + 校验，产物在 dist\
 
 .EXAMPLE
-    pwsh -File scripts\release.ps1 -Publish
+    powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Publish
         # 校验通过后推 tag 并发布 Release
 #>
 [CmdletBinding()]

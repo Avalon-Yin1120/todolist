@@ -883,10 +883,10 @@ adb shell setprop debug.todo.anim_ms 0
 
 ```powershell
 # 只出包 + 校验（不碰远端），产物在 dist\
-pwsh -File scripts\release.ps1
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1
 
 # 校验通过后推 tag 并创建 Release（需要已登录的 gh CLI）
-pwsh -File scripts\release.ps1 -Publish
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Publish
 ```
 
 脚本做的事：
@@ -960,9 +960,9 @@ gh release create v2.0.0 todolist-2.0.0.apk SHA256SUMS.txt --title "待办提醒
 
 1. 改代码，`versionCode + 1`（正式版这条线只增不减），`versionName` 按语义化版本改；
 2. 写 `docs/release-notes/v<版本>.md` 与 `CHANGELOG.md` 的条目；
-3. 跑 `pwsh -File scripts\release.ps1` —— 它会跑测试、出包、做三条校验、生成 `dist\` 与 `SHA256SUMS.txt`；
+3. 跑 `powershell -ExecutionPolicy Bypass -File scripts\release.ps1` —— 它会跑测试、出包、做三条校验、生成 `dist\` 与 `SHA256SUMS.txt`；
 4. 看一遍 `dist\` 里的包名 / 版本 / 签名输出，确认无误；
-5. `pwsh -File scripts\release.ps1 -Publish` —— 打 tag、push、建 Release 并上传附件；
+5. `powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Publish` —— 打 tag、push、建 Release 并上传附件；
 6. 到 GitHub Release 页面点开，核对附件名与 `SHA256SUMS.txt` 内容；
 7. 把 `versionCode` 与产物记录进发版台账（本地维护，不入库）。
 
