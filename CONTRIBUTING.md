@@ -78,3 +78,17 @@ $e.Count                              # 应该是 0
 ```
 
 `.yml` / `.md` / `.kt` 一律 UTF-8 **无 BOM**（GitHub Actions 与 Gradle 都不喜欢 BOM）。
+## 七、CI 会做什么（以及它红了怎么办）
+
+推送到 `main` 或开 PR 会跑 `.github/workflows/ci.yml`：装 JDK 17 + Android SDK → 单测 → 编译调试包。
+它**不签名、不发版**（发版是 `release.yml`，手动触发）。
+
+CI 红了先看「Diagnostics（失败时先看这里）」那一步：它会打印 JDK / Android SDK / 时区 / `./gradlew --version`。
+常见原因：
+
+| 症状 | 原因 |
+|---|---|
+| 卡几分钟后失败在 `./gradlew` | Gradle 发行版下载不动。`gradle-wrapper.properties` 的 `distributionUrl` **必须是官方地址**（`services.gradle.org`），不要用国内镜像——GitHub 的 runner 在美国 |
+| 日期/时间断言差 8 小时 | 测试机时区漂移。`app/build.gradle.kts` 的 `testOptions` 已把 `user.timezone` 钉成 `Asia/Shanghai`；想复现 CI 环境可用 `TEST_TZ=UTC` 跑一次 |
+| `sdkmanager: command not found` / 许可未接受 | `android-actions/setup-android` 之后要 `sdkmanager --licenses` 再装组件，workflow 里已经这么做了 |
+| `./gradlew: Permission denied` | `gradlew` 丢了可执行位。workflow 里有 `chmod +x gradlew` 兜底，本地请 `git update-index --chmod=+x gradlew` |
