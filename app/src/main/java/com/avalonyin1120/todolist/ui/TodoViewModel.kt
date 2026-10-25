@@ -533,9 +533,25 @@ class TodoViewModel(
 
         when (action) {
             RecurrenceAction.DELETE -> viewModelScope.launch {
+                // 这两条分支都要自己写事件日志。
+                // 「删一条不是周期待办」走的是 confirmDelete()，那里已经记过；
+                // 而周期待办是先弹「仅这一次 / 整个系列」再回到这里，早先漏了记，
+                // 于是事件日志里「新增/修改」有、删除整个系列却凭空没有
+                // （专职测试 agent 在 2026-10-25 的 v2.1.0-preview 测试里发现）。
                 if (entireSeries) {
+                    ReminderLog.add(
+                        ReminderLog.CAT_DELETE,
+                        "删除整个重复系列：「${todo.name}」",
+                        names = listOf(todo.name),
+                    )
                     coordinator.delete(todo.id)
                 } else {
+                    ReminderLog.add(
+                        ReminderLog.CAT_DELETE,
+                        "跳过这一次：「${todo.name}」｜场次=" +
+                            LOG_TIME_FORMAT.format(java.util.Date(local.pendingOccurrenceStart)),
+                        names = listOf(todo.name),
+                    )
                     coordinator.skipOccurrence(todo.id, local.pendingOccurrenceStart)
                     notify(Notice.OccurrenceSkipped)
                 }

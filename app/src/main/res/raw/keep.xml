@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 这个文件的作用是「别删我」，不是配置：文件名必须是 keep.xml，且必须放在 res/raw/ 下，
+  AGP 的资源压缩器（shrinkResources）只在这个位置读 tools:keep。
+
+  为什么需要它：release 构建（isMinifyEnabled = true + isShrinkResources = true）把
+  res/raw/alarm_beep.wav 判成「无人引用」并剔掉了 —— 于是闹钟式提醒到点只能退回系统铃声：
+      E/TodoAlarm: 内置闹钟音频播放失败（IOException: Prepare failed.: status=0x1），改用系统闹钟铃声
+  代码里是有引用的（AlarmRinger 用 `R.raw.alarm_beep` 拼 `android.resource://…` URI），
+  但 R8 会把那个 int 常量内联进代码，字段引用随之消失，资源压缩器就看不到「有人用」。
+  这是 release 包从 1.0.0 起就存在的老问题（debug 包因为有 raw 文件一切正常，所以一直没发现），
+  由专职测试 agent 在 2026-10-25 的 v2.1.0-preview 测试里拆包对比发现。
+
+  改动注意：新增任何「只由字符串 URI 引用」的资源时，同样要在这里登记，否则 release 包里会凭空消失。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/alarm_beep" />
