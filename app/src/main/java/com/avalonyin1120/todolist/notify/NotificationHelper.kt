@@ -192,12 +192,25 @@ open class NotificationHelper(
                 "｜重要性=${channel?.importance ?: "?"}｜通知权限=${canPostNotifications()}",
         )
         if (canPostNotifications()) {
-            NotificationManagerCompat.from(context).notify(notificationId, notification)
-            Log.i(
-                TAG,
-                "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +
-                    "name=${todo.name}",
-            )
+            // 为什么要 try/catch：`canPostNotifications()` 与这次 notify 之间不是原子的。
+            // Android 13+ 用户可以在系统设置里「暂停通知」（REVOKE_POST_NOTIFICATIONS_WITH_IMPORT），
+            // 那一刻 notify 会抛 SecurityException；不接住的话整条提醒路径直接崩在
+            // 「检查时还有权限」的窗口里。lint 的 MissingPermission 检查也正因此报错——
+            // 它看不进 canPostNotifications() 内部（那是个 open fun，测试里会被替换）。
+            try {
+                NotificationManagerCompat.from(context).notify(notificationId, notification)
+                Log.i(
+                    TAG,
+                    "已发送提醒：id=$notificationId todo=${todo.id} mode=${todo.mode} " +
+                        "name=${todo.name}",
+                )
+            } catch (e: SecurityException) {
+                Log.w(TAG, "发通知被系统拒绝（权限在检查之后被撤销）：todo=${todo.id}", e)
+                ReminderLog.add(
+                    ReminderLog.CAT_NOTIFY,
+                    "通知没发出去：系统在检查之后拒绝了通知权限（todo=${todo.id}）",
+                )
+            }
         } else {
             // 不开日志就会「什么都没发生」：把原因明确记下来
             Log.w(TAG, "通知权限未开启，无法发出通知：todo=${todo.id}")
