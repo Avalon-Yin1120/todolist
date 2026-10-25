@@ -1,5 +1,12 @@
 # 待办提醒（Todolist）
 
+> [!IMPORTANT]
+> **这个项目是怎么做出来的 / How this project was made**
+>
+> 本项目由作者提出需求、设计功能、运行测试并反馈问题，AI 工具据此迭代生成和修改代码，并由 AI 工具完成构建打包。仓库中未包含从第三方项目复制粘贴的代码；运行时依赖均为 Apache-2.0 等宽松许可证。如无意中包含受第三方许可证保护的片段，请联系删除。
+>
+> This project was made as follows: the author set the requirements, designed the features, ran the tests and reported the problems; AI tools then iteratively generated and modified the code accordingly, and AI tools also performed the build and packaging. The repository contains no code copied and pasted from third-party projects; all runtime dependencies are permissively licensed (Apache-2.0 and similar). If any fragment protected by a third-party licence has been included inadvertently, please get in touch and it will be removed.
+
 一个**不联网**的 Android 待办提醒：起止时间 + 提前提醒量，日 / 周 / 月三种日历视图，
 周期待办可按场次完成，到点用「通知」或「闹钟式」提醒。
 
@@ -15,18 +22,19 @@
 | 最新正式版 | [Releases → 最新版](https://github.com/Avalon-Yin1120/todolist/releases/latest) |
 | 文件名 | `todolist-<版本>.apk`（约 1.4 MB，release 签名） |
 | 系统要求 | Android 8.0（API 26）及以上 |
-| 完整性校验 | 同页 `SHA256SUMS.txt`；签名证书 SHA-256 `3226b61f6503d52b0c5b9ef1b50e88e3952190a783674f61caf3027465b333a6` |
+| 完整性校验 | **只看同一个 Release 里的 `SHA256SUMS.txt`**。本 README 与更新说明都**不再抄写** APK 的文件哈希：APK 无法逐字节复现（zip 时间戳让每次编译的哈希都不同），抄进文档的数字迟早与成品不符 |
 
 安装：下载 APK 后直接点开安装，系统提示「未知来源」是正常的（本应用不经应用商店分发）。
 **从 `1.0.0` 升级请直接覆盖安装，不要先卸载**——数据在应用私有目录里，卸载即清除；
 四个必要条件（包名 / 签名 / versionCode / 数据库版本）见 [§10.6](#106-从-100-原地升级200-起)。
 
-校验签名（可选，防止中间人换包）：
+校验签名（可选，防止中间人换包）。**签名证书的指纹是稳定的**（同一把密钥签出来的包都一样），
+所以它写在这里；APK 文件本身的哈希请对 Release 附件：
 
 ```bash
 apksigner verify --print-certs todolist-2.0.0.apk
-# SHA-256 digest 应为 3226b61f...b333a6
-shasum -a 256 todolist-2.0.0.apk   # 与 SHA256SUMS.txt 对照
+# SHA-256 digest 应为 3226b61f...b333a6（证书指纹，不是文件哈希）
+sha256sum -c SHA256SUMS.txt      # 与同一个 Release 里下载的校验文件对照
 ```
 
 ## 截图

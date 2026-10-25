@@ -128,6 +128,12 @@ fun AboutScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            // 关于页最显眼的位置留给「这个项目是怎么做出来的」。
+            // 放在版本号正下方、其它所有说明之前，是因为它是对**项目本身**的交代，
+            // 而下面几段是对**功能**的解释——先后顺序不该反过来。
+            AiStatementCard()
+
             Text(
                 text = "记录待办的名称与起止时间，并在你设定的提前量到达时提醒你。" +
                     "数据全部保存在本机，不需要注册也不需要联网。",
@@ -276,6 +282,64 @@ fun PrivacyScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * 「这个项目是怎么做出来的」——中文原文 + 英文对照。
+ *
+ * 为什么值得占关于页最显眼的位置：用户（尤其是从 GitHub 下来的）看到一个功能完整、
+ * 有 392 条单测、有签名和发布流程的应用，会默认它是「某个团队的产品」，
+ * 于是对它该有什么、不该有什么产生错误的预期。把制作方式写在最前面，
+ * 是唯一能避免这种误解的办法，也顺带说明了「没有复制粘贴第三方代码」这件事。
+ *
+ * 文案由项目作者提供，此处**逐字保留**，不做润色（包括「如无意中包含……请联系删除」这类
+ * 兜底表述）——它是一份声明，不是一段介绍。
+ */
+@Composable
+private fun AiStatementCard() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TAG_ABOUT_AI_STATEMENT),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "这个项目是怎么做出来的",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Text(
+                text = "本项目由作者提出需求、设计功能、运行测试并反馈问题，AI 工具据此迭代生成和修改代码，" +
+                    "并由 AI 工具完成构建打包。仓库中未包含从第三方项目复制粘贴的代码；" +
+                    "运行时依赖均为 Apache-2.0 等宽松许可证。" +
+                    "如无意中包含受第三方许可证保护的片段，请联系删除。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.testTag(TAG_ABOUT_AI_STATEMENT_ZH),
+            )
+            Text(
+                text = "How this project was made: the author defined the requirements, designed the " +
+                    "features, ran the tests and reported the problems; AI tools then iteratively " +
+                    "generated and modified the code accordingly, and AI tools also performed the " +
+                    "build and packaging. The repository contains no code copied and pasted from " +
+                    "third-party projects; all runtime dependencies are permissively licensed " +
+                    "(Apache-2.0 and similar). If any fragment protected by a third-party licence " +
+                    "has been included inadvertently, please get in touch and it will be removed.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.testTag(TAG_ABOUT_AI_STATEMENT_EN),
+            )
+        }
+    }
+}
+
 @Composable
 private fun AboutCard(title: String, content: @Composable () -> Unit) {
     Card(
@@ -354,5 +418,8 @@ private fun PermissionRow(name: String, usage: String) {
 const val TAG_ABOUT_SCREEN = "about_screen"
 const val TAG_ABOUT_BACK = "about_back"
 const val TAG_ABOUT_HEALTH = "about_health"
+const val TAG_ABOUT_AI_STATEMENT = "about_ai_statement"
+const val TAG_ABOUT_AI_STATEMENT_ZH = "about_ai_statement_zh"
+const val TAG_ABOUT_AI_STATEMENT_EN = "about_ai_statement_en"
 const val TAG_PRIVACY_SCREEN = "privacy_screen"
 const val TAG_PRIVACY_BACK = "privacy_back"

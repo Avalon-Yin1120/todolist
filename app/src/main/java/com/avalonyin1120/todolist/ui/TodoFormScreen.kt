@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.avalonyin1120.todolist.domain.DaySpan
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
 import com.avalonyin1120.todolist.domain.NaturalLanguage
@@ -160,6 +161,13 @@ fun TodoFormContent(
     // 重复态下日期不再单独选：用它把「日期到底算哪天」明确写出来
     val effectiveStartDate = state.recurrenceStartDate?.let { parseIsoDate(it) }
         ?: state.startAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+    // 跨越天数：起止时刻落在不同的日历日就是 ≥2 天（见 DaySpan）。
+    // 时间还没选全时按 1 天处理，界面上不提示跨天。
+    val spanDays = if (state.startAt != null && state.endAt != null) {
+        DaySpan.spanDays(state.startAt!!, state.endAt!!, zone)
+    } else {
+        1
+    }
 
     Column(
         modifier = modifier
@@ -307,6 +315,27 @@ fun TodoFormContent(
                         ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // 周期态下日期被隐藏了，如果不给这个入口，用户就没法创建跨天的周期待办
+                SpanDaysControl(
+                    spanDays = spanDays,
+                    onChange = form::setSpanDays,
+                )
+            }
+
+            // 「跨越了几天」：单次和周期都提示，周期还要点明「每一场」。
+            // 只在真的跨天（≥2 天）时才出：
+            // 每天都是 1 天的普通待办不需要看到这句话，否则每填一次表都被念一遍。
+            if (spanDays >= 2 && state.startAt != null && state.endAt != null) {
+                Text(
+                    text = if (recurring) {
+                        DaySpan.describeRecurring(spanDays)
+                    } else {
+                        DaySpan.describe(spanDays)
+                    } + spanRangeText(state.startAt!!, state.endAt!!, zone),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag(TAG_SPAN_HINT),
                 )
             }
 
@@ -940,3 +969,66 @@ private fun NaturalLanguageCard(form: DraftFormStateHolder, zone: ZoneId) {
 const val TAG_NL_FIELD = "form_nl_field"
 const val TAG_NL_PARSE = "form_nl_parse"
 const val TAG_NL_MATCHED = "form_nl_matched"
+
+// 「跨越天数」相关标签
+const val TAG_SPAN_STEPPER = "form_span_stepper"
+const val TAG_SPAN_MINUS = "form_span_minus"
+const val TAG_SPAN_PLUS = "form_span_plus"
+const val TAG_SPAN_VALUE = "form_span_value"
+const val TAG_SPAN_HINT = "form_span_hint"
+
+/**
+ * 「跨越天数」调节器（只在周期态出现）。
+ *
+ * 为什么不是两个日期选择器：周期态下「日期」这个词本身就是歧义的——
+ * 它到底指规则生效日、还是指每一场的结束日？界面上早就把日期框藏了，
+ * 只留钟点。所以这里用一个**天数**而不是日期来表达「这一场要到第几天才结束」，
+ * 用户的脑子里本来就只有一个「跨几天」的量。
+ *
+ * 减号在 1 天时禁用（当天开始当天结束），加号在 [DaySpan.MAX_SPAN_DAYS] 时禁用。
+ */
+@Composable
+private fun SpanDaysControl(spanDays: Int, onChange: (Int) -> Unit) {
+    FormLabel("跨越天数")
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(TAG_SPAN_STEPPER),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedButton(
+            onClick = { onChange(spanDays - 1) },
+            enabled = spanDays > 1,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier.testTag(TAG_SPAN_MINUS),
+        ) { Text("−") }
+        Text(
+            text = "$spanDays 天",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .testTag(TAG_SPAN_VALUE),
+        )
+        OutlinedButton(
+            onClick = { onChange(spanDays + 1) },
+            enabled = spanDays < DaySpan.MAX_SPAN_DAYS,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier.testTag(TAG_SPAN_PLUS),
+        ) { Text("＋") }
+    }
+    Text(
+        text = "1 天＝当天结束；2 天＝次日结束，以此类推（最多 ${DaySpan.MAX_SPAN_DAYS} 天）。" +
+            "周期待办的每一场都按这个跨度展开。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 「2 天」这种跨度在列表里看不出细节，这里补一段「几号几点 → 几号几点」。 */
+private fun spanRangeText(startAt: Long, endAt: Long, zone: ZoneId): String {
+    val formatter = DateTimeFormatter.ofPattern("M月d日 HH:mm")
+    val start = Instant.ofEpochMilli(startAt).atZone(zone).format(formatter)
+    val end = Instant.ofEpochMilli(endAt).atZone(zone).format(formatter)
+    return "（$start → $end）"
+}

@@ -1,6 +1,7 @@
 package com.avalonyin1120.todolist.ui
 
 import com.avalonyin1120.todolist.domain.Clock
+import com.avalonyin1120.todolist.domain.DaySpan
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
 import com.avalonyin1120.todolist.domain.MonthDays
@@ -12,6 +13,7 @@ import com.avalonyin1120.todolist.domain.WeekDays
 import com.avalonyin1120.todolist.data.TodoDraft
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -109,8 +111,18 @@ class DraftFormStateHolder(
         recurrenceStartDate: String? = null,
         recurrenceEndDate: String? = null,
         recurrenceCount: Int? = null,
+        /**
+         * 新建时「默认落在哪一天」。
+         *
+         * 只有新建（[id] 为 0 且 [startAt] 为 null）时才起作用：用户在日/周/月视图里
+         * 翻到某一天再点「+」，新待办就该落在那一天，而不是落回今天。
+         * 传 null 表示「用现在」（列表页就是这种）。
+         */
+        startDate: LocalDate? = null,
     ) {
-        val start = startAt ?: defaultStartAtProvider(clock.now())
+        val start = startAt
+            ?: startDate?.let { defaultStartAtOn(it, clock.now(), zone) }
+            ?: defaultStartAtProvider(clock.now())
         val lead = leadMinutes ?: rememberedLeadMinutes().coerceIn(0, ReminderTime.MAX_LEAD_MINUTES)
         _state.value = DraftFormState(
             id = id,
@@ -159,6 +171,31 @@ class DraftFormStateHolder(
 
     fun setEndAt(value: Long) {
         _state.value = _state.value.copy(endAt = value)
+        clearError(FormValidator.FIELD_RANGE)
+    }
+
+    /** 当前草稿跨越了几天（见 [DaySpan]）；时间还没选全时返回 1。 */
+    fun spanDays(): Int {
+        val current = _state.value
+        val start = current.startAt ?: return 1
+        val end = current.endAt ?: return 1
+        return DaySpan.spanDays(start, end, zone)
+    }
+
+    /**
+     * 设置「跨越天数」：保留结束时刻的钟点，只把结束日期挪到第 [spanDays] 天。
+     *
+     * 周期态下两个时间框只让用户改钟点（日期由重复范围决定），如果没有这个入口，
+     * 用户就**无法**创建一条跨天的周期待办——他只能先建一条跨天的单次待办再改成周期
+     * （用户报的困惑正是这么来的）。
+     */
+    fun setSpanDays(spanDays: Int) {
+        val current = _state.value
+        val start = current.startAt ?: return
+        val end = current.endAt ?: return
+        val safe = spanDays.coerceIn(1, DaySpan.MAX_SPAN_DAYS)
+        val newEnd = DaySpan.endAtWithOffset(start, end, (safe - 1).toLong(), zone) ?: return
+        _state.value = current.copy(endAt = newEnd)
         clearError(FormValidator.FIELD_RANGE)
     }
 
@@ -358,6 +395,25 @@ class DraftFormStateHolder(
         fun defaultStartAtOf(now: Long): Long {
             val nextHour = now + DEFAULT_DURATION_MS
             return nextHour - nextHour % DEFAULT_DURATION_MS
+        }
+
+        /** 新建待办在「非今天的那一天」上的默认钟点：上午九点。 */
+        const val DEFAULT_PICKED_HOUR: Int = 9
+
+        /**
+         * 新建待办落在 [date] 那一天的默认起始时间。
+         *
+         * * [date] 就是「现在」所在的那天 → 沿用 [defaultStartAtOf]（下一个整点）；
+         * * 别的日子 → 那天上午九点。
+         *
+         * 为什么不给未来的日子也用「下一个整点」：用户在 10 月的月视图里翻到明年 3 月
+         * 点「+」，意义是「3 月那一天要做的事」，钟点跟现在这个 14:37 毫无关系；
+         * 上午九点是所有钟点里最不容易被当成「系统填错了」的一个。
+         */
+        fun defaultStartAtOn(date: LocalDate, now: Long, zone: ZoneId): Long {
+            val nowDate = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+            if (date == nowDate) return defaultStartAtOf(now)
+            return date.atTime(DEFAULT_PICKED_HOUR, 0).atZone(zone).toInstant().toEpochMilli()
         }
     }
 }

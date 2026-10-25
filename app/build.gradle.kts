@@ -44,8 +44,13 @@ android {
         // versionCode 的纪律：Android 只比较它的大小，所以正式版这条线必须**大于**
         // 上一个正式版（1.0.0 = 1）。预览版那条线（3..12）是另一个 applicationId，
         // 与这里的数字互不干扰。
-        versionCode = 2
-        versionName = "2.0.0"
+        //
+        // 2.1.0-preview（本包）：包名**故意不加** `.preview`。
+        // 2.0.0 已经是正式版、装在所有测试机上，而这一版要验证的正是「在 2.0.0 的数据上原地升级」，
+        // 换个包名就变成了另一个应用、数据也换了一套，测不出真正要测的东西。
+        // versionCode 3 只被本预览包用过；将来正式发布 2.1.0 时**必须**用 ≥ 4。
+        versionCode = 3
+        versionName = "2.1.0-preview"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

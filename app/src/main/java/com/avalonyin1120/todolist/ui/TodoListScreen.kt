@@ -1110,16 +1110,29 @@ private fun PermissionBanner(
     // 「或已确认」这一半很关键：这几个开关里有的应用根本读不到（锁屏/横幅/静默这类渠道细节），
     // 检查页因此允许用户亲手勾「我已设置好」。勾过之后这里必须跟着消失，
     // 否则用户照着引导做完了，主界面还一直挂着「有 N 项未开启」。
-    val missing = listOf(
-        canScheduleExact || confirmedHealthSteps.contains(ReminderHealth.STEP_EXACT_ALARM),
-        canPostNotifications || confirmedHealthSteps.contains(ReminderHealth.STEP_ALLOW_NOTIFICATIONS),
-        batteryOptimizationIgnored || confirmedHealthSteps.contains(ReminderHealth.STEP_BATTERY),
-        notificationChannelOk || (
-            confirmedHealthSteps.contains(ReminderHealth.STEP_LOCKSCREEN_BANNER) &&
-                confirmedHealthSteps.contains(ReminderHealth.STEP_SILENT_OFF)
-            ),
-    ).count { !it }
-    if (missing == 0) return
+    //
+    // 这里刻意**列出缺的是哪几项**而不是只报个数：这条横幅曾在鸿蒙上与检查页的结论
+    // 对不上（用户说「权限都勾上了」，横幅还在），只报个数时谁也说不清差的是哪一项；
+    // 写出名字之后，用户一眼就能看出是「通知样式」还是「电池优化」在撒谎。
+    val missingItems = buildList {
+        if (!(canScheduleExact || confirmedHealthSteps.contains(ReminderHealth.STEP_EXACT_ALARM))) {
+            add("闹钟和提醒")
+        }
+        if (!(canPostNotifications || confirmedHealthSteps.contains(ReminderHealth.STEP_ALLOW_NOTIFICATIONS))) {
+            add("通知权限")
+        }
+        if (!(batteryOptimizationIgnored || confirmedHealthSteps.contains(ReminderHealth.STEP_BATTERY))) {
+            add("电池优化")
+        }
+        if (!(notificationChannelOk || (
+                confirmedHealthSteps.contains(ReminderHealth.STEP_LOCKSCREEN_BANNER) &&
+                    confirmedHealthSteps.contains(ReminderHealth.STEP_SILENT_OFF)
+                ))
+        ) {
+            add("通知样式")
+        }
+    }
+    if (missingItems.isEmpty()) return
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         modifier = Modifier
@@ -1131,7 +1144,8 @@ private fun PermissionBanner(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "有 $missing 项提醒设置未开启，可能到点不提醒",
+                text = "有 ${missingItems.size} 项提醒设置未开启（${missingItems.joinToString("、")}），" +
+                    "可能到点不提醒",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.weight(1f),

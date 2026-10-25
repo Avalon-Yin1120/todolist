@@ -16,16 +16,33 @@
 |---|---|
 | `2.0.0` 及之后的正式版 | ✅ |
 | `1.0.0` | ⚠️ 只接受**严重**问题，修复会进 `2.x` |
-| 预览包（`applicationId` 带 `.preview`） | ❌ 那是开发用包，随时会被重装 |
+| 预览包（版本号带 `-preview`） | ❌ 那是开发用包，随时会被重装 |
 
 ## 怎么报告
 
-**请不要开公开 issue。** 用下面任一渠道：
+**请不要开公开 issue**（公开就等于把利用方式先告诉了所有人）。用下面这一条渠道：
 
-1. GitHub 仓库的 **Security → Report a vulnerability**（Private vulnerability reporting，推荐）；
-2. 或发邮件到 `<在此填写你的联系邮箱>`（收到后 72 小时内回）。
+1. GitHub 仓库的 **Security → Report a vulnerability**（Private vulnerability reporting）。
 
-请尽量说明：影响版本、复现步骤、需要什么前提（例如「需要另一个应用调用某个 exported 组件」）。
+这个渠道**不需要邮箱**：你提交后只有仓库维护者能看到，来回沟通也在同一个私有页面里完成，
+不会暴露任何一方的邮件地址。如果这个入口在你那边不可用（例如未登录），
+可以开一个**不含细节**的 issue，只写一句「发现安全问题，请用私有渠道联系我」，
+维护者会通过 Security 面板回复你。
+
+收到后 72 小时内回。请尽量说明：影响版本、复现步骤、需要什么前提
+（例如「需要另一个应用调用某个 exported 组件」）。
+
+> **关于邮箱：本仓库不提供邮箱渠道，也不包含任何个人邮箱地址。**
+> 提交历史里的作者邮箱是 GitHub 的 `noreply` 地址
+> （`Avalon-Yin1120@users.noreply.github.com`）——它由 GitHub 生成，只用于把提交归属到账号，
+> 不能用来发信。如果你确实需要一个邮箱兜底，可行做法依次是：
+>
+> * **别名转发**：Cloudflare Email Routing（自有域名）、SimpleLogin、DuckDuckGo Email Protection，
+>   对外只给别名，随时可关停；
+> * **平台自带的一次性地址**：Apple「隐藏我的邮件地址」、Firefox Relay；
+> * **专用小号**：单独注册一个只用于本项目的邮箱，泄露了直接弃用。
+>
+> 三者都不必公开真实邮箱；本仓库目前的选择是**干脆不提供邮箱**，只留 Security Advisories。
 
 ## 已知的、不算漏洞的行为
 

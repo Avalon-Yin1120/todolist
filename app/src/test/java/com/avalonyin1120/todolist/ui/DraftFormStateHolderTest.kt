@@ -1,11 +1,13 @@
 package com.avalonyin1120.todolist.ui
 
+import com.avalonyin1120.todolist.domain.DaySpan
 import com.avalonyin1120.todolist.domain.ReminderMode
 import com.avalonyin1120.todolist.domain.FormError
 import com.avalonyin1120.todolist.domain.FormValidator
 import com.avalonyin1120.todolist.testing.FakeClock
 import com.avalonyin1120.todolist.testing.TestData
 import com.google.common.truth.Truth.assertThat
+import java.time.LocalDate
 import org.junit.Before
 import org.junit.Test
 
@@ -350,5 +352,78 @@ class DraftFormStateHolderTest {
         assertThat(DraftFormState(leadMinutes = 45).leadLabel).isEqualTo("提前 45 分钟")
         assertThat(DraftFormState(leadMinutes = 120).leadLabel).isEqualTo("提前 2 小时")
         assertThat(DraftFormState(leadMinutes = 2880).leadLabel).isEqualTo("提前 2 天")
+    }
+
+    // ---------------------------------------------------------------- 默认日期
+
+    @Test
+    fun `新建时默认落在指定日期的那一天`() {
+        val target = LocalDate.of(2025, 3, 8)
+
+        form.open(startDate = target)
+
+        val start = java.time.Instant.ofEpochMilli(form.state.value.startAt!!)
+            .atZone(TestData.ZONE).toLocalDateTime()
+        assertThat(start.toLocalDate()).isEqualTo(target)
+        // 未来的日子用上午九点：用户在意的是「哪一天」，不是「现在几点」
+        assertThat(start.hour).isEqualTo(DraftFormStateHolder.DEFAULT_PICKED_HOUR)
+        assertThat(start.minute).isEqualTo(0)
+    }
+
+    @Test
+    fun `指定日期就是今天时仍然用下一个整点`() {
+        // TestData.NOW = 2025-01-15 10:00 UTC = 18:00 Asia/Shanghai
+        form.open(startDate = LocalDate.of(2025, 1, 15))
+
+        assertThat(form.state.value.startAt).isEqualTo(now + 60 * TestData.MINUTE)
+    }
+
+    @Test
+    fun `编辑已有项时默认日期不生效`() {
+        val target = LocalDate.of(2025, 3, 8)
+        val existing = LocalDate.of(2025, 1, 20)
+        val existingStart = existing.atTime(9, 30).atZone(TestData.ZONE)
+            .toInstant().toEpochMilli()
+
+        form.open(id = 7L, startAt = existingStart, startDate = target)
+
+        assertThat(form.state.value.startAt).isEqualTo(existingStart)
+    }
+
+    // ---------------------------------------------------------------- 跨越天数
+
+    @Test
+    fun `默认是 1 天`() {
+        form.open()
+
+        assertThat(form.spanDays()).isEqualTo(1)
+    }
+
+    @Test
+    fun `把跨度改成 2 天会保留结束时刻的钟点`() {
+        form.open()
+        val start = form.state.value.startAt!!
+        val endHourBefore = java.time.Instant.ofEpochMilli(form.state.value.endAt!!)
+            .atZone(TestData.ZONE).toLocalTime()
+
+        form.setSpanDays(2)
+
+        val newEnd = form.state.value.endAt!!
+        assertThat(form.spanDays()).isEqualTo(2)
+        assertThat(java.time.Instant.ofEpochMilli(newEnd).atZone(TestData.ZONE).toLocalTime())
+            .isEqualTo(endHourBefore)
+        assertThat(DaySpan.offsetDays(start, newEnd, TestData.ZONE)).isEqualTo(1)
+    }
+
+    @Test
+    fun `跨度超出范围会被夹住`() {
+        form.open()
+
+        form.setSpanDays(999)
+        assertThat(form.spanDays()).isEqualTo(DaySpan.MAX_SPAN_DAYS)
+
+        form.setSpanDays(0)
+        // 0 与负值一律按 1 天处理，不允许出现「结束早于开始」
+        assertThat(form.spanDays()).isEqualTo(1)
     }
 }

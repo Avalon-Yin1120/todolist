@@ -131,24 +131,59 @@ python tools\gen_third_party_notices.py build\deps-runtime.log
 
 `androidx.graphics:graphics-path` 的 `lib/*/libandroidx.graphics.path.so` 里包含
 **Skia** 的 `SkPath` 移植代码（BSD-3-Clause，Copyright 2006 The Android Open Source
-Project）。BSD-3-Clause 要求在二进制分发时保留版权声明，因此在此单独声明：
+Project）。BSD-3-Clause 是「保留版权声明 + 免责声明 + 不得用作者名义背书」三条，
+其中第 3 条（不得用版权人/贡献者的名字为衍生产品背书）在二进制分发时同样生效，
+因此这里给出**完整的许可证原文**（不是摘要），以履行「保留声明」的义务：
 
 > Copyright 2006 The Android Open Source Project
-> Redistribution and use in source and binary forms, with or without modification,
-> are permitted provided that the above copyright notice and this notice are retained.
-> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY EXPRESS OR
-> IMPLIED WARRANTIES ARE DISCLAIMED.
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are
+> met:
+>
+> 1. Redistributions of source code must retain the above copyright
+>    notice, this list of conditions and the following disclaimer.
+> 2. Redistributions in binary form must reproduce the above copyright
+>    notice, this list of conditions and the following disclaimer in the
+>    documentation and/or other materials provided with the distribution.
+> 3. Neither the name of the copyright holder nor the names of its
+>    contributors may be used to endorse or promote products derived from
+>    this software without specific prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+> HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 （这是本项目 APK 里**唯一**一段非 Apache-2.0 的第三方代码；BSD-3-Clause 同样是宽松许可，
-没有传染性，只要求署名。）
+没有传染性，只要求署名与不得背书。）
 
 
 ## 使用这些组件时需要遵守的义务
 
-Apache-2.0 的要求只有三条，都很轻：
+Apache-2.0 的对应义务写在它的第 4 条里，共四项，前两项常见、后两项容易漏：
 
-1. 分发时附上许可证副本（本仓库的 `LICENSE` 与每个上游项目的许可证）；
-2. 保留版权、专利、商标与署名声明；
-3. 若修改了文件，标注「已修改」。
+1. **附许可证副本**（§4(a)）：分发时给出 Apache-2.0 全文，本仓库是 `LICENSE`
+   与 `NOTICE`（本项目自身是 GPLv3，这点见下一段）；
+2. **标注修改**（§4(b)）：改动过的文件要显著注明「已修改」；
+3. **保留声明**（§4(c)）：保留源码形式里的版权、专利、商标与署名声明
+   （与衍生作品无关的除外）；
+4. **NOTICE 文件的条件性义务**（§4(d)）：**只有**当上游的分发物里含有 `NOTICE`
+   文本文件时才有这一条——此时衍生作品必须**可读地**附带该 NOTICE 里的归属声明
+   （可以放在本文件或分发包的类似位置，但必须能读到；NOTICE 里若声明了免责/责任限制，
+   也不能删）。AndroidX 的部分 AAR 与 Kotlin 的部分 jar 就带 `NOTICE`，
+   因此这条并不是「永远用不上」的条款：
+   本文件正是用来履行它的载体——把上游归属信息集中在一处，随 APK 一起提供。
+
+注意与本项目**自身**许可证的区别：本项目以 GPLv3 发布（见 `LICENSE`），
+上面四项是「使用这些第三方组件」产生的义务，与「使用本项目」产生的 GPLv3 义务
+是两件事，不要混为一谈。
 
 因此 **重新打包分发 APK 时，请把本文件与 `LICENSE` 一起提供**。

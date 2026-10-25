@@ -356,8 +356,16 @@ class TodoViewModel(
     // ---------------------------------------------------------------- 表单
 
     fun openCreateForm() {
-        form.open()
+        // 日期跟着当前视图走（见 CreateDateDefaults）：在日/周/月视图里翻到某一天再点 +，
+        // 新待办就落在那一天，而不是永远落回「现在」。
+        form.open(startDate = defaultCreateDate())
         editState.value = EditState(isOpen = true, editingId = 0L)
+    }
+
+    /** 新建待办的默认日期；null 表示跟随现在（列表页）。 */
+    internal fun defaultCreateDate(): LocalDate? {
+        val local = localState.value
+        return CreateDateDefaults.forView(local.tab, local.selectedDate, today())
     }
 
     fun openEditForm(todo: Todo) {

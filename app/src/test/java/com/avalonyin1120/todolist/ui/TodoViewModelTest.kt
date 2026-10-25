@@ -12,6 +12,7 @@ import com.avalonyin1120.todolist.domain.Recurrence
 import com.avalonyin1120.todolist.domain.WeekWindow
 import com.avalonyin1120.todolist.testing.TestData
 import com.google.common.truth.Truth.assertThat
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -863,5 +864,65 @@ class TodoViewModelTest {
         settle()
 
         assertThat(viewModel.uiState.value.settings.weekWindowLabel()).isEqualTo("06:00 – 22:00")
+    }
+
+    // ---------------------------------------------------------------- 新建默认日期
+
+    /** 表单里当前的起始日期（按测试时区解释）。 */
+    private fun draftDate(): LocalDate =
+        java.time.Instant.ofEpochMilli(viewModel.form.state.value.startAt!!)
+            .atZone(TestData.ZONE).toLocalDate()
+
+    @Test
+    fun `日视图新建默认落在正在看的那一天`() = runTest(testDispatcher) {
+        settle()
+        val target = LocalDate.of(2026, 5, 20)
+
+        viewModel.selectDate(target)
+        viewModel.openCreateForm()
+        settle()
+
+        assertThat(draftDate()).isEqualTo(target)
+    }
+
+    @Test
+    fun `月视图新建默认落在那个月的同号数`() = runTest(testDispatcher) {
+        settle()
+        viewModel.selectTab(NavTab.MONTH)
+        // 往后翻两个月；起点今天（2025-01-15）→ 2025-03-15
+        viewModel.shiftMonth(2)
+        settle()
+
+        viewModel.openCreateForm()
+        settle()
+
+        assertThat(draftDate()).isEqualTo(LocalDate.of(2025, 3, 15))
+    }
+
+    @Test
+    fun `周视图新建默认落在那一周的同星期几`() = runTest(testDispatcher) {
+        settle()
+        viewModel.selectTab(NavTab.WEEK)
+        // 往后翻两周；今天 2025-01-15 周三 → 2025-01-29 周三
+        viewModel.shiftDate(14)
+        settle()
+
+        viewModel.openCreateForm()
+        settle()
+
+        assertThat(draftDate()).isEqualTo(LocalDate.of(2025, 1, 29))
+    }
+
+    @Test
+    fun `列表页新建仍然落在现在`() = runTest(testDispatcher) {
+        settle()
+        viewModel.selectDate(LocalDate.of(2026, 5, 20))
+        viewModel.selectTab(NavTab.TODO)
+
+        viewModel.openCreateForm()
+        settle()
+
+        // 列表页没有日期上下文：仍是「今天 + 下一个整点」
+        assertThat(draftDate()).isEqualTo(LocalDate.of(2025, 1, 15))
     }
 }

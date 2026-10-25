@@ -92,3 +92,13 @@ CI 红了先看「Diagnostics（失败时先看这里）」那一步：它会打
 | 日期/时间断言差 8 小时 | 测试机时区漂移。`app/build.gradle.kts` 的 `testOptions` 已把 `user.timezone` 钉成 `Asia/Shanghai`；想复现 CI 环境可用 `TEST_TZ=UTC` 跑一次 |
 | `sdkmanager: command not found` / 许可未接受 | `android-actions/setup-android` 之后要 `sdkmanager --licenses` 再装组件，workflow 里已经这么做了 |
 | `./gradlew: Permission denied` | `gradlew` 丢了可执行位。workflow 里有 `chmod +x gradlew` 兜底，本地请 `git update-index --chmod=+x gradlew` |
+| `✗ Found unknown Gradle Wrapper JAR files` / `At least one Gradle Wrapper Jar failed validation` | `gradle/actions/setup-gradle` 拿 `gradle-wrapper.jar` 的 SHA-256 去比 Gradle 官方清单，手写的/重新生成的 jar 不在清单里。**发版流程**已改成「构建工具从主分支同步 + 关掉这项校验」（见 `release.yml`）；CI 那条线必须用官方 jar（`gradle wrapper` 任务重新生成的那个，43,583 字节） |
+
+## 八、发版纪律
+
+1. **每个正式版**都要在 `CHANGELOG.md` 里加一节，写清「相较于上一个正式版新增了什么、修复了什么」；
+   这一节的最后一行固定是 `新增了 NaN 个未知 bug。`——彩蛋，别删。
+2. 正式版还要有 `docs/release-notes/v<版本>.md`（Release 正文），与 `CHANGELOG.md` 的对应小节保持一致。
+3. **不要在文档里抄写 APK 的文件哈希**：APK 不是可重复构建（zip 时间戳），每编一次哈希就变；
+   校验以 Release 附件里的 `SHA256SUMS.txt` 为准。**签名证书指纹**是稳定的，可以写。
+4. 预览版的 `versionName` 带 `-preview`，且**不要**打 tag、不要发 Release。
