@@ -1,5 +1,6 @@
 package com.avalonyin1120.todolist.ui
 
+import com.avalonyin1120.todolist.domain.DaySpan
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -59,6 +60,26 @@ object DateFormats {
     /** 月-日。 */
     fun monthDay(epochMillis: Long, zone: ZoneId): String =
         java.time.Instant.ofEpochMilli(epochMillis).atZone(zone).format(MONTH_DAY)
+
+    /**
+     * 卡片上的「起 → 止」。
+     *
+     * 同一天只写一次日期：`10-25 09:00 → 10:00`。
+     * **跨天时必须把结束日期也写出来**：`10-25 09:00 → 10-26 10:00（跨 2 天）`。
+     *
+     * 这里原来是「起始带日期、结束只写 HH:mm」，跨天的待办于是显示成
+     * `10-25 09:00 → 10:00`——看起来只有一个小时，用户会以为是自己填错了。
+     * 跨天在周期待办里尤其常见（一条跨天的单次待办改成周期后，每一场都跨天）。
+     * 天数用 [DaySpan] 的说法，与表单里的提示保持一致。
+     */
+    fun range(startAt: Long, endAt: Long, zone: ZoneId): String {
+        val start = java.time.Instant.ofEpochMilli(startAt).atZone(zone)
+        val end = java.time.Instant.ofEpochMilli(endAt).atZone(zone)
+        val sameDay = start.toLocalDate() == end.toLocalDate()
+        val endText = if (sameDay) end.format(TIME) else end.format(MONTH_DAY_TIME)
+        val suffix = if (sameDay) "" else "（跨 ${DaySpan.spanDays(startAt, endAt, zone)} 天）"
+        return "${start.format(MONTH_DAY_TIME)} → $endText$suffix"
+    }
 
     /**
      * 由「年 / 月 / 日」三个输入框的文本构造日期，非法时返回 null。

@@ -13,6 +13,33 @@ import org.junit.Test
  */
 class DateFormatsTest {
 
+    // -------------------------------------------------- 卡片上的「起 → 止」
+
+    // 注意：本类末尾还有一个 at(year, month, day, ...) 的同名工具函数，
+    // 这里必须换一个名字，否则 4 个参数的调用会被重载解析抢走（2026 会被当成月份）。
+    private fun epochIn2026(month: Int, day: Int, hour: Int, minute: Int = 0): Long =
+        java.time.LocalDateTime.of(2026, month, day, hour, minute)
+            .atZone(TestData.ZONE).toInstant().toEpochMilli()
+
+    @Test
+    fun `同一天的起止只写一次日期`() {
+        val text = DateFormats.range(epochIn2026(10, 25, 9), epochIn2026(10, 25, 18), TestData.ZONE)
+        assertThat(text).isEqualTo("10-25 09:00 → 18:00")
+    }
+
+    @Test
+    fun `跨天的起止必须写出结束日期和跨越天数`() {
+        // 这正是用户报的误解点：只写 HH:mm 时，跨天的一条看起来像「只有一小时」
+        val text = DateFormats.range(epochIn2026(10, 25, 23), epochIn2026(10, 26, 1), TestData.ZONE)
+        assertThat(text).isEqualTo("10-25 23:00 → 10-26 01:00（跨 2 天）")
+    }
+
+    @Test
+    fun `跨三天的起止也算对`() {
+        val text = DateFormats.range(epochIn2026(10, 25, 22), epochIn2026(10, 27, 6), TestData.ZONE)
+        assertThat(text).contains("10-27 06:00")
+        assertThat(text).contains("跨 3 天")
+    }
     // -------------------------------------------------- 周视图标题带年份（第 4 项）
 
     @Test

@@ -679,7 +679,7 @@ fun TodoRowCard(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "${formatDateTime(todo.startAt, zone)} → ${formatTime(todo.endAt, zone)}",
+                    text = DateFormats.range(todo.startAt, todo.endAt, zone),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -766,12 +766,8 @@ private fun modeLabel(todo: Todo): String = when (todo.mode) {
     ReminderMode.NONE -> "不提醒"
 }
 
-private fun formatDateTime(epochMillis: Long, zone: ZoneId): String =
-    Instant.ofEpochMilli(epochMillis).atZone(zone)
-        .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
-
-private fun formatTime(epochMillis: Long, zone: ZoneId): String =
-    Instant.ofEpochMilli(epochMillis).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
+// 日期/时间的格式化统一走 DateFormats（跨天卡片要写出结束日期，见 DateFormats.range），
+// 这里不再各留一份私有实现——两份实现早晚会在「跨天怎么写」上分叉。
 
 const val TAG_WEEK_COLUMN_PREFIX = "week_col_"
 const val TAG_MONTH_CELL_PREFIX = "month_cell_"
